@@ -57,6 +57,7 @@ def filled() -> pd.DataFrame:
                 "p": p,
                 "b365": (1.0 / p) * margin,
                 "home_team": f"Home {j}", "away_team": f"Away {j}",
+                "team": f"Team {j}", "target": "corners", "line": 0.5 + i,
             })
     return pd.DataFrame(rows)
 
@@ -89,15 +90,21 @@ def test_pick_ids_match_the_label_the_search_writes(result, payload):
     legs rather than fail.
     """
     opts = result["options"]
-    expected = {f"{opts.codes[j]}#{k}"
-                for row in result["picks"] for j, k in enumerate(row) if k >= 0}
+    # An option covers one proposition or two, and the token names the
+    # *proposition* -- which is what makes it resolve against `propositions`.
+    expected = {f"{opts.codes[j]}#{prop}"
+                for row in result["picks"] for j, k in enumerate(row) if k >= 0
+                for prop in opts.members[j][int(k)]}
     assert {p["id"] for p in payload["propositions"]} >= expected
 
 
 def test_picks_and_stakes_line_up(payload):
     """One stake per leg, in the same order, summing to the whole stake."""
     for pf_ in payload["portfolios"]:
+        # `legs` counts propositions held, which is what both of these list --
+        # a portfolio taking a pair from one match has more legs than events.
         assert len(pf_["stakes"]) == len(pf_["picks"]) == pf_["legs"]
+        assert pf_["legs"] >= pf_["events"]
         assert sum(pf_["stakes"]) == pytest.approx(1.0, abs=1e-4)
 
 
@@ -106,8 +113,10 @@ def test_stakes_are_the_ones_the_pipeline_computes(result, payload):
     kept = result["scored"][result["scored"]["undominated"]]
     row = kept.iloc[0]
     picks_row = result["picks"][int(row["combo"])]
-    stakes, _, _ = pf.stakes_for(picks_row[None, :], result["options"], row["split"])
-    expected = [round(float(v), 6) for v in stakes[0][picks_row >= 0]]
+    stakes, prob, _, _ = pf.stakes_for(picks_row[None, :], result["options"], row["split"])
+    # One stake per proposition: `stakes_for` returns two slots per event and a
+    # pair fills both, so the live slots are the ones carrying a probability.
+    expected = [round(float(v), 6) for v in stakes[0][prob[0] > 0]]
     assert payload["portfolios"][0]["stakes"] == expected
 
 

@@ -300,17 +300,18 @@ def _selection_frequency(picks_lists: list[list[str]], ids: list[str]) -> dict[s
 def _stake_fractions(kept: pd.DataFrame, picks: np.ndarray, opts) -> list[list[float]]:
     """Each exported portfolio's per-leg stakes, as fractions of the total.
 
-    Computed here rather than in the browser, deliberately. The two splits are
-    closed forms -- `1/e` and `1/(o^2 p (1-p))`, both normalised -- and a
-    JavaScript copy of them would be small, correct on the day it was written,
-    and completely untested. That is the shape of every "second derivation that
-    happens to agree today" this pipeline has already been bitten by. `stakes_for`
-    is the one definition, `tests/test_staking.py` pins it, and the page just
-    multiplies by whatever is in the stake box.
+    Computed here rather than in the browser, deliberately. The split is a closed
+    form and a JavaScript copy of it would be small, correct on the day it was
+    written, and completely untested. That is the shape of every "second
+    derivation that happens to agree today" this pipeline has already been bitten
+    by. `stakes_for` is the one definition, `tests/test_staking.py` pins it, and
+    the page just multiplies by whatever is in the stake box.
 
-    Ordered to match `picks`: `picks_label` walks events in index order and emits
-    the ones that are backed, which is exactly the order the non-skipped columns
-    come out of `stakes_for` in.
+    **One stake per proposition, not per event.** `stakes_for` returns two slots
+    per event, the second filled only where the option is a pair, so a portfolio
+    holding a pair emits two stakes for that match. The order matches `picks`:
+    events in index order, and within an event the pair's first leg then its
+    second -- which is the order `legs` expands them in.
     """
     from ..portfolio import stakes_for
 
@@ -321,9 +322,11 @@ def _stake_fractions(kept: pd.DataFrame, picks: np.ndarray, opts) -> list[list[f
     for split, sub in kept.groupby("split", sort=False):
         combos = sub["combo"].to_numpy()
         rows = picks[combos]
-        stakes, _, _ = stakes_for(rows, opts, str(split))
-        for label, row, st in zip(sub.index, rows, stakes):
-            out[positions[label]] = [round(float(v), 6) for v in st[row >= 0]]
+        stakes, prob, _, _ = stakes_for(rows, opts, str(split))
+        # A slot is a real bet when it carries a probability; that covers skipped
+        # events and the empty second slot of a single in one test.
+        for label, st, pr in zip(sub.index, stakes, prob):
+            out[positions[label]] = [round(float(v), 6) for v in st[pr > 0]]
     assert all(v is not None for v in out), "a portfolio was left without stakes"
     return out  # type: ignore[return-value]
 
@@ -385,8 +388,8 @@ def _growth_blocks(kept: pd.DataFrame, picks: np.ndarray, opts, *,
     positions = {label: i for i, label in enumerate(kept.index)}
     for split, sub in kept.groupby("split", sort=False):
         rows = picks[sub["combo"].to_numpy()]
-        stakes, prob, odds = stakes_for(rows, opts, str(split))
-        g = growth_metrics(stakes * odds, prob, projection=projection)
+        stakes, prob, odds, corr = stakes_for(rows, opts, str(split))
+        g = growth_metrics(stakes * odds, prob, rho=corr, projection=projection)
         for label, rec in zip(sub.index, g.to_dict("records")):
             i = positions[label]
             out[i] = {
@@ -477,7 +480,11 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         {
             "id": int(rec["id"]),
             "split": SPLIT_KEYS[rec["split"]],
+            # `legs` is propositions held, `events` is matches backed. They differ
+            # wherever an option is a pair, and conflating them was the bug that
+            # would have turned a leg-count control into a lid on propositions.
             "legs": int(rec["legs"]),
+            "events": int(rec.get("events", rec["legs"])),
             "expected_return_pct": _p(rec["pct_expected_return"]),
             "sd_pct": _p(rec["pct_sd"]),
             "variance": round(float(rec["variance"]), 8),

@@ -37,6 +37,8 @@ def _form(p, o, codes, labels=None):
         "p": np.asarray(p, dtype=float),
         "b365": np.asarray(o, dtype=float),
         "home_team": "H", "away_team": "A",
+        "team": "H", "target": "corners",
+        "line": np.arange(len(p), dtype=float) + 0.5,
     })
 
 
@@ -68,8 +70,8 @@ def _er_var(picks, opts, split=pf.SPLIT_GROWTH, max_leg_stake=1.0):
     Uncapped by default: the frontier tests compare against the closed forms the
     search ranks on, and the per-leg cap is deliberately a departure from them.
     """
-    stakes, p, o = pf.stakes_for(picks, opts, split, max_leg_stake=max_leg_stake)
-    return pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, split, max_leg_stake=max_leg_stake)
+    return pf.metrics(stakes, p, o, rho)
 
 
 def _frontier_er(picks, opts):
@@ -166,7 +168,7 @@ def test_thresholds_are_monotone_and_bounded():
     rng = np.random.default_rng(11)
     opts = _random_options(rng, 8)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH)
     th = pf.threshold_probs_batch(stakes * o, p, THR)
     assert ((th >= 0) & (th <= 1)).all()
     assert (np.diff(th, axis=1) <= 1e-12).all(), "P(return > t) must fall as t rises"
@@ -192,8 +194,8 @@ def test_metrics_match_the_closed_forms_the_search_ranks_on(split):
     rng = np.random.default_rng(5)
     opts = _random_options(rng, 9)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, split, max_leg_stake=1.0)
-    er, var = pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, split, max_leg_stake=1.0)
+    er, var = pf.metrics(stakes, p, o, rho)
 
     terms = [pf.leg_terms(opts.p[j], opts.o[j]) for j in range(opts.n_events)]
     sums = pf._sum_terms(picks, opts, terms)
@@ -214,8 +216,8 @@ def test_growth_weights_reach_the_capacity_ceiling():
     rng = np.random.default_rng(21)
     opts = _random_options(rng, 9)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
-    er, var = pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    er, var = pf.metrics(stakes, p, o, rho)
     capacity = pf._sum_terms(
         picks, opts, [pf.leg_terms(opts.p[j], opts.o[j]) for j in range(opts.n_events)])["c"]
     live = var > 0
@@ -229,11 +231,12 @@ def test_every_portfolio_spends_the_whole_stake(split, cap):
     rng = np.random.default_rng(6)
     opts = _random_options(rng, 7)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, _ = pf.stakes_for(picks, opts, split, max_leg_stake=cap)
+    stakes, p, _, _ = pf.stakes_for(picks, opts, split, max_leg_stake=cap)
     assert stakes.sum(axis=1) == pytest.approx(1.0)
-    # and puts nothing on an event it skipped
-    assert (stakes[picks < 0] == 0).all()
-    assert (p[picks < 0] == 0).all()
+    # and puts nothing on an event it skipped -- both of that event's slots
+    skipped = np.repeat(picks < 0, 2, axis=1)
+    assert (stakes[skipped] == 0).all()
+    assert (p[skipped] == 0).all()
 
 
 def test_the_leg_cap_binds_without_ever_losing_stake():
@@ -246,13 +249,13 @@ def test_the_leg_cap_binds_without_ever_losing_stake():
     rng = np.random.default_rng(31)
     opts = _random_options(rng, 9)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, _ = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
-    n_legs = (picks >= 0).sum(axis=1)
+    stakes, p, _, _ = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
+    n_props = (p > 0).sum(axis=1)          # propositions held, not events backed
     assert stakes.sum(axis=1) == pytest.approx(1.0)
-    row_limit = np.maximum(0.15, 1.0 / np.maximum(n_legs, 1))
+    row_limit = np.maximum(0.15, 1.0 / np.maximum(n_props, 1))
     assert (stakes.max(axis=1) <= row_limit + 1e-9).all()
-    # and it is not a no-op: on a 9-event pool something must actually be capped
-    assert (n_legs >= 7).any() and (stakes.max(axis=1)[n_legs >= 7] <= 0.15 + 1e-9).all()
+    # and it is not a no-op: something in the pool must actually be capped
+    assert (n_props >= 7).any() and (stakes.max(axis=1)[n_props >= 7] <= 0.15 + 1e-9).all()
 
 
 def test_the_growth_split_agrees_with_staking_on_one_portfolio():
@@ -261,11 +264,18 @@ def test_the_growth_split_agrees_with_staking_on_one_portfolio():
     opts = _random_options(rng, 5)
     picks, _ = pf.build_pool(opts, min_legs=5)
     row = picks[[0]]
-    stakes, p, o = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    # singles only: `staking`'s primitives know nothing about correlated pairs,
+    # and the claim being pinned is that this module does not re-derive them.
+    opts = pf.event_options(pf.qualify(_form(
+        [0.5, 0.4, 0.6], [2.2, 2.8, 1.9], ["A-1", "A-2", "A-3"])), pairs=False)
+    picks, _ = pf.build_pool(opts, min_legs=3)
+    row = picks[[0]]
+    stakes, p, o, rho = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    live = p[0] > 0
     assert stakes[0].sum() == pytest.approx(1.0, rel=1e-12)
-    er, var = pf.metrics(stakes, p, o)
-    assert er[0] == pytest.approx(staking.expected_return(p[0], o[0], stakes[0]))
-    assert var[0] == pytest.approx(staking.variance(p[0], o[0], stakes[0]))
+    er, var = pf.metrics(stakes, p, o, rho)
+    assert er[0] == pytest.approx(staking.expected_return(p[0][live], o[0][live], stakes[0][live]))
+    assert var[0] == pytest.approx(staking.variance(p[0][live], o[0][live], stakes[0][live]))
 
 
 def test_the_retired_splits_refuse_rather_than_guess():
@@ -509,7 +519,8 @@ def test_search_end_to_end():
             p = float(rng.uniform(0.3, 0.8))
             rows.append({"sheet_code": f"EV-{j}", "label": f"EV-{j} #{i}", "p": p,
                          "b365": (1.0 / p) * float(rng.uniform(1.02, 1.2)),
-                         "home_team": "H", "away_team": "A"})
+                         "home_team": "H", "away_team": "A",
+                         "team": "H", "target": "corners", "line": 0.5 + i})
     res = pf.search(pd.DataFrame(rows), min_legs=1)
 
     s = res["scored"]

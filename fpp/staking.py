@@ -45,10 +45,12 @@ and the assumption stand or fall together, so they are documented together.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
-from .spec import STAT_BY_KEY, TARGETS
+from .spec import STAT_BY_KEY, STATS, TARGETS
 
 # Floor on the model's own probability for a proposition to reach the odds form.
 #
@@ -133,6 +135,57 @@ def proposition_label(target: str, team: str, line: float) -> str:
     match nothing, and a fixture would quietly show no prices at all.
     """
     return f"{STAT_BY_KEY[target].display} - {team} - Over {line}"
+
+
+# The inverse of `proposition_label`, and it lives beside it deliberately: the two
+# are a pair, and a parser that drifted from its builder would not fail, it would
+# match nothing. `ledger` re-exports this under its old name.
+_TARGET_BY_DISPLAY: dict[str, str] = {s.display: s.key for s in STATS}
+_LABEL = re.compile(r"^(?P<head>.+) - Over (?P<line>-?\d+(?:\.\d+)?)$")
+
+
+def parse_label(label: str) -> tuple[str, str, float]:
+    """``"Corners - Parma - Over 1.5"`` -> ``("corners", "Parma", 1.5)``.
+
+    Split from the right on `" - Over "` and only then on the first `" - "`: a
+    club whose name contains a hyphen-space is a real possibility, and none of
+    the four display names does.
+    """
+    m = _LABEL.match(str(label).strip())
+    if not m:
+        raise ValueError(f"cannot parse proposition label {label!r}")
+    head, line = m.group("head"), float(m.group("line"))
+    display, _, team = head.partition(" - ")
+    if not team:
+        raise ValueError(f"cannot parse proposition label {label!r}")
+    if display not in _TARGET_BY_DISPLAY:
+        raise ValueError(f"unknown market {display!r} in {label!r}")
+    return _TARGET_BY_DISPLAY[display], team, line
+
+
+def label_parts(labels: pd.Series) -> pd.DataFrame:
+    """``(target, team, line)`` per label, as columns, ``NA`` where unparseable.
+
+    The tolerant, vectorised companion to `parse_label`. What a proposition is
+    *about* is only recoverable from its name -- the odds form carries no separate
+    columns for it -- and pairing two propositions needs to know whether they share
+    a team or a market.
+
+    Tolerant rather than strict because a label this cannot read is a proposition
+    that simply cannot be paired, which is a normal outcome and not an error. The
+    strict version stays for `ledger`, where an unreadable label *is* a bug: it
+    means a result cannot be joined back to the bet that produced it.
+    """
+    out = {"target": [], "team": [], "line": []}
+    for raw in labels:
+        try:
+            target, team, line = parse_label(raw)
+        except (ValueError, TypeError):
+            target, team, line = pd.NA, pd.NA, np.nan
+        out["target"].append(target)
+        out["team"].append(team)
+        out["line"].append(line)
+    return pd.DataFrame(out, index=labels.index)
 
 
 def propositions(preds: pd.DataFrame, dispersion: dict | None = None) -> pd.DataFrame:

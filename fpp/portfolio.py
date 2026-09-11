@@ -116,6 +116,7 @@ exercise is choosing between portfolios that differ by less than that.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -124,6 +125,7 @@ import pandas as pd
 from .config import MAX_LEG_STAKE, PAIR_CORRELATION, PAIR_KEEP, PAIRS_ENABLED
 from .staking import (
     P_CLAMP,
+    label_parts,
     THRESHOLDS,
     add_edge,
     best_price,
@@ -256,6 +258,15 @@ def qualify(filled: pd.DataFrame) -> pd.DataFrame:
         return scored
     kept = [undominated(g) for _, g in scored.groupby("sheet_code", sort=False)]
     out = pd.concat(kept, ignore_index=True)
+    # What a proposition is *about* only exists in its name -- the odds form
+    # carries no separate columns for it -- and pairing two of them needs to know
+    # whether they share a team or a market. Attached here, where the canonical
+    # proposition frame is made, so `event_options`, `legs` and the payload all
+    # read one derivation. Tolerant: a label this cannot read is a proposition
+    # that cannot be paired, which is a normal outcome rather than an error.
+    for col, values in label_parts(out["label"]).items():
+        if col not in out:
+            out[col] = values
     return out.sort_values(["sheet_code", "p"], ascending=[True, False]).reset_index(drop=True)
 
 
@@ -266,20 +277,52 @@ class Options:
     Everything is indexed ``[event][option]``. `props` keeps the original rows so
     a portfolio can be expanded back into propositions with prices and books
     attached, which is what makes the output actionable rather than abstract.
+
+    An **option is one proposition or two**. ``p``/``o`` are its first slot and
+    ``p2``/``o2`` its second, zero where the option is a single; ``rho`` is the
+    pair's correlation and is zero there too. ``members`` records which rows of
+    `props` each option covers, so `legs` can expand it back.
+
+    The second slot is carried as zeros rather than as ragged per-option lists
+    because a zero-probability leg is already a genuine no-op in every consumer --
+    `metrics`, `return_pmf`, `ruin_prob` -- so singles and pairs score through one
+    path with no branching.
+
+    All four pair fields default to empty and are filled with the single-option
+    shape, so an `Options` built the old way (three tuples and a frame) still
+    constructs and behaves exactly as it did.
     """
 
     codes: tuple[str, ...]              # sheet_code per event, in search order
-    p: tuple[np.ndarray, ...]           # model probability per option
-    o: tuple[np.ndarray, ...]           # best bookmaker price per option
+    p: tuple[np.ndarray, ...]           # model probability, first slot
+    o: tuple[np.ndarray, ...]           # best bookmaker price, first slot
     props: pd.DataFrame                 # the source rows, with `event` and `option`
+    p2: tuple[np.ndarray, ...] = ()     # second slot, 0 where the option is single
+    o2: tuple[np.ndarray, ...] = ()
+    rho: tuple[np.ndarray, ...] = ()    # the pair's correlation, 0 for a single
+    members: tuple[tuple[tuple[int, ...], ...], ...] = ()   # [event][option] -> prop rows
     n_events: int = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "n_events", len(self.codes))
+        zeros = tuple(np.zeros_like(x) for x in self.p)
+        if not self.p2:
+            object.__setattr__(self, "p2", zeros)
+        if not self.o2:
+            object.__setattr__(self, "o2", tuple(np.zeros_like(x) for x in self.p))
+        if not self.rho:
+            object.__setattr__(self, "rho", tuple(np.zeros_like(x) for x in self.p))
+        if not self.members:
+            object.__setattr__(self, "members", tuple(
+                tuple((i,) for i in range(len(x))) for x in self.p))
 
     @property
     def sizes(self) -> np.ndarray:
         return np.array([len(x) for x in self.p], dtype=np.int64)
+
+    @property
+    def has_pairs(self) -> bool:
+        return any(bool((x > 0).any()) for x in self.p2)
 
     def min_legs_for(self, leg_var: int) -> int:
         """The leg floor sitting ``leg_var`` events below everything on offer.
@@ -334,18 +377,115 @@ class Options:
         return float(np.prod(radix.astype(float)))
 
 
-def event_options(qualified: pd.DataFrame) -> Options:
-    """Group qualifying propositions into the per-event menu."""
-    codes, ps, os_, frames = [], [], [], []
+def pair_rho(a: pd.Series, b: pd.Series) -> float:
+    """The measured correlation between two propositions in the same match.
+
+    Graded by what they share, from `config.PAIR_CORRELATION`. Same team and same
+    stat is graded again by how far apart the two lines are, because the headline
+    0.455 averages over a real gradient: adjacent lines are nearly the same bet at
+    0.63, three or more apart much less so at 0.30.
+    """
+    if a["team"] != b["team"]:
+        return PAIR_CORRELATION["opposite_teams"]
+    if a["target"] != b["target"]:
+        return PAIR_CORRELATION["same_team_diff_stat"]
+    gap = abs(float(a["line"]) - float(b["line"]))
+    if gap <= 1.0:
+        return PAIR_CORRELATION["same_team_same_stat_adjacent"]
+    if gap <= 2.0:
+        return PAIR_CORRELATION["same_team_same_stat_near"]
+    return PAIR_CORRELATION["same_team_same_stat_far"]
+
+
+def _pair_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, float]]:
+    """``(i, j, rho)`` for the pairs of one event worth offering the search.
+
+    Every pair is priced first -- one 2x2 solve each, a few thousand per slate, and
+    the cost was never in *generating* pairs but in carrying them through the
+    dynamic programme. Then the ``(c, w)``-undominated set is kept, capped at
+    `keep`.
+
+    **Ranking the pairs rather than the propositions is what makes this
+    correlation-aware for free**, because ``c`` already contains ``rho``. Ranking
+    propositions by standalone Sharpe and pairing the best few is not, and it
+    discards exactly the pairs worth having: where a cross-team hedge wins, its
+    weaker leg typically ranks fifth or worse on its own.
+
+    ``(c, w)`` and not ``c`` alone, because the search's state is
+    ``(n_events, bucket(W))`` ranked on ``C`` -- two options with equal capacity at
+    different normalisers land in different buckets and are both useful. The same
+    shape as `staking.undominated`'s ``(p, o)`` frontier, one level up.
+    """
+    n = len(g)
+    if n < 2 or keep <= 0:
+        return []
+    # A proposition whose label would not parse cannot be classified against
+    # another, so it is offered on its own and never in a pair.
+    known = g[["team", "target", "line"]].notna().all(axis=1).to_numpy()
+    idx = [(a, b) for a, b in itertools.combinations(range(n), 2)
+           if known[a] and known[b]]
+    if not idx:
+        return []
+    i = np.fromiter((a for a, _ in idx), int, len(idx))
+    j = np.fromiter((b for _, b in idx), int, len(idx))
+    rho = np.array([pair_rho(g.iloc[a], g.iloc[b]) for a, b in idx], dtype=float)
+    p = g["p"].to_numpy(float); o = g["o"].to_numpy(float)
+    t = pair_terms(p[i], o[i], p[j], o[j], rho)
+
+    live = t["c"] > 0                       # a lay-requiring pair prices to zero
+    order = np.argsort(-t["c"][live], kind="stable")
+    c, w = t["c"][live][order], t["w"][live][order]
+    ii, jj, rr = i[live][order], j[live][order], rho[live][order]
+
+    out, w_min = [], np.inf
+    for k in range(len(c)):
+        if w[k] < w_min:                    # undominated: no better c at no more w
+            out.append((int(ii[k]), int(jj[k]), float(rr[k])))
+            w_min = w[k]
+            if len(out) >= keep:
+                break
+    return out
+
+
+def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
+                  pair_keep: int = PAIR_KEEP) -> Options:
+    """Group qualifying propositions into the per-event menu.
+
+    Each event offers every qualifying proposition on its own, plus -- with
+    ``pairs`` on -- up to `pair_keep` of its two-proposition combinations. Singles
+    are never restricted; only pairs are filtered.
+
+    Pairing needs ``team``, ``target`` and ``line`` to know what two propositions
+    share, which is what sets their correlation, and `qualify` attaches all three
+    from the label. **A proposition missing any of them is never paired** -- not
+    paired at a guessed correlation, because guessing here does not produce a
+    slightly wrong number, it produces a capacity that can be 43% too high and a
+    stake to match.
+    """
+    if not {"team", "target", "line"} <= set(qualified.columns):
+        pairs = False
+    codes, ps, os_, p2s, o2s, rhos, members, frames = [], [], [], [], [], [], [], []
     for i, (code, g) in enumerate(qualified.groupby("sheet_code", sort=False)):
         g = g.reset_index(drop=True)
+        n = len(g)
+        cand = _pair_candidates(g, pair_keep) if pairs else []
+        p = g["p"].to_numpy(float); o = g["o"].to_numpy(float)
+
         codes.append(str(code))
-        ps.append(g["p"].to_numpy(dtype=float))
-        os_.append(g["o"].to_numpy(dtype=float))
-        frames.append(g.assign(event=i, option=np.arange(len(g))))
+        ps.append(np.r_[p, [p[a] for a, _, _ in cand]])
+        os_.append(np.r_[o, [o[a] for a, _, _ in cand]])
+        p2s.append(np.r_[np.zeros(n), [p[b] for _, b, _ in cand]])
+        o2s.append(np.r_[np.zeros(n), [o[b] for _, b, _ in cand]])
+        rhos.append(np.r_[np.zeros(n), [r for _, _, r in cand]])
+        members.append(tuple([(k,) for k in range(n)] + [(a, b) for a, b, _ in cand]))
+        # `option` indexes the *option* list, so a proposition's own row keeps the
+        # index it always had and pairs are appended after. `picks_label`'s
+        # `CODE#k` token therefore still resolves, and older payloads still read.
+        frames.append(g.assign(event=i, option=np.arange(n)))
     props = (pd.concat(frames, ignore_index=True) if frames
              else qualified.assign(event=pd.Series(dtype=int), option=pd.Series(dtype=int)))
-    return Options(tuple(codes), tuple(ps), tuple(os_), props)
+    return Options(tuple(codes), tuple(ps), tuple(os_), props,
+                   tuple(p2s), tuple(o2s), tuple(rhos), tuple(members))
 
 
 # --- Per-option separable quantities ---------------------------------------
@@ -374,11 +514,66 @@ def leg_terms(p: np.ndarray, o: np.ndarray) -> dict[str, np.ndarray]:
     ``mu`` is clamped at zero rather than allowed negative. `qualify` admits only
     ``e >= 1`` so a negative edge cannot arrive here, but ``e == 1`` exactly is
     reachable and must contribute nothing rather than a signed weight.
+
+    For a **pair**, the same two quantities come from the 2x2 solve in
+    `pair_terms`, and both stay additive over events -- which is what lets the
+    dynamic programme stay exactly as it was.
     """
     pc = np.clip(p, P_CLAMP, 1.0 - P_CLAMP)
     mu = np.maximum(o * p - 1.0, 0.0)
     v = o**2 * pc * (1.0 - pc)
     return {"c": mu**2 / v, "w": mu / v}
+
+
+def pair_terms(p1: np.ndarray, o1: np.ndarray, p2: np.ndarray, o2: np.ndarray,
+               rho: np.ndarray) -> dict[str, np.ndarray]:
+    """``(c, w, b1, b2)`` for options that may hold two correlated propositions.
+
+    The generalisation of `leg_terms` to a pair. With edges ``mu`` and covariance
+    ``S = [[v1, rho sqrt(v1 v2)], [rho sqrt(v1 v2), v2]]``::
+
+        b = S^-1 mu        c = mu . b        w = b1 + b2
+
+    which reduces to `leg_terms` exactly when the second slot is empty, so one
+    function prices both and singles need no special case.
+
+    **This is where the correlation earns its keep.** Two legs of equal Sharpe at
+    ``rho`` are worth ``2/(1+rho)`` independent legs, not two: at the measured
+    0.455 for a team's same stat, the second leg is worth 0.37 of one. Pricing the
+    pair as if it were independent inflates capacity -- by 43% on the 11 Sept
+    slate -- and since the suggested stake is proportional to capacity, it
+    overstakes by the same margin.
+
+    A pair whose solve wants a negative weight is rejected by returning zero
+    capacity: that is a hedge requiring a lay, and a lay is not a bet available
+    here. The caller drops those rather than offering them.
+    """
+    pc1 = np.clip(p1, P_CLAMP, 1.0 - P_CLAMP)
+    pc2 = np.clip(p2, P_CLAMP, 1.0 - P_CLAMP)
+    mu1 = np.maximum(o1 * p1 - 1.0, 0.0)
+    mu2 = np.where(p2 > 0, np.maximum(o2 * p2 - 1.0, 0.0), 0.0)
+    # Both variances are floored at 1 where their slot is empty. A skipped event
+    # arrives here with o = p = 0 on *both* slots, which would otherwise make the
+    # determinant vanish and divide by zero -- the result was discarded by the
+    # `np.where` below, but only after numpy had computed and warned about it.
+    v1 = np.where(p1 > 0, o1**2 * pc1 * (1.0 - pc1), 1.0)
+    v2 = np.where(p2 > 0, o2**2 * pc2 * (1.0 - pc2), 1.0)
+    cov = np.where(p2 > 0, rho * np.sqrt(v1 * v2), 0.0)
+
+    # Closed form for the 2x2 inverse. `det` is strictly positive: |rho| < 1 is
+    # enforced upstream and both variances are now strictly positive.
+    det = v1 * v2 - cov**2
+    b1 = (v2 * mu1 - cov * mu2) / det
+    b2 = np.where(p2 > 0, (v1 * mu2 - cov * mu1) / det, 0.0)
+    bad = (b1 < 0) | (b2 < 0)
+    b1 = np.where(bad, 0.0, b1)
+    b2 = np.where(bad, 0.0, b2)
+    return {"c": mu1 * b1 + mu2 * b2, "w": b1 + b2, "b1": b1, "b2": b2}
+
+
+def option_terms(opts: Options, j: int) -> dict[str, np.ndarray]:
+    """The additive `(c, w)` pair for every option of event ``j``, pairs included."""
+    return pair_terms(opts.p[j], opts.o[j], opts.p2[j], opts.o2[j], opts.rho[j])
 
 
 # --- Stakes and exact metrics ----------------------------------------------
@@ -387,27 +582,41 @@ def leg_terms(p: np.ndarray, o: np.ndarray) -> dict[str, np.ndarray]:
 def stakes_for(picks: np.ndarray, opts: Options, split: str,
                max_leg_stake: float = MAX_LEG_STAKE
                ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """``(stakes, p, o)`` per portfolio, as ``(n_portfolios, n_events)`` arrays.
+    """``(stakes, p, o, rho)`` per portfolio.
 
-    A skipped event gets ``stake = 0`` and ``p = 0``, which makes it a genuine
-    no-op everywhere downstream: it contributes nothing to any sum, and in the
-    threshold convolution a leg with ``p = 0`` leaves the distribution untouched.
-    Carrying skips as zeros rather than as ragged per-portfolio arrays is what
-    lets every portfolio be scored in one vectorised pass regardless of length.
+    ``stakes``, ``p`` and ``o`` are ``(n_portfolios, 2 * n_events)`` -- two slots
+    per event, the second filled only where the chosen option is a pair. ``rho`` is
+    ``(n_portfolios, n_events)``, one correlation per event block, zero for a
+    single.
+
+    A skipped event, and the empty slot of a single, get ``stake = 0`` and
+    ``p = 0``, which makes them genuine no-ops everywhere downstream: they
+    contribute nothing to any sum, and in the threshold convolution a leg with
+    ``p = 0`` leaves the distribution untouched. Carrying them as zeros rather than
+    as ragged per-portfolio arrays is what lets every portfolio be scored in one
+    vectorised pass regardless of length -- and it is what lets a pair cost no
+    special case.
     """
     m, n_ev = picks.shape
-    p = np.zeros((m, n_ev)); o = np.zeros((m, n_ev))
+    p = np.zeros((m, 2 * n_ev)); o = np.zeros((m, 2 * n_ev)); rho = np.zeros((m, n_ev))
     for j in range(n_ev):
         taken = picks[:, j] >= 0
         idx = picks[taken, j]
-        p[taken, j] = opts.p[j][idx]
-        o[taken, j] = opts.o[j][idx]
+        p[taken, 2 * j] = opts.p[j][idx]
+        o[taken, 2 * j] = opts.o[j][idx]
+        p[taken, 2 * j + 1] = opts.p2[j][idx]
+        o[taken, 2 * j + 1] = opts.o2[j][idx]
+        rho[taken, j] = opts.rho[j][idx]
 
     active = p > 0
     if split == SPLIT_GROWTH:
-        pc = np.clip(p, P_CLAMP, 1.0 - P_CLAMP)
-        v = np.where(active, o**2 * pc * (1.0 - pc), 1.0)
-        weight = np.where(active, np.maximum(o * p - 1.0, 0.0) / v, 0.0)
+        # The same `mu/v` weighting, solved per event block so a pair's two legs
+        # are weighted against each other *through* their correlation rather than
+        # as if they were unrelated.
+        t = pair_terms(p[:, 0::2], o[:, 0::2], p[:, 1::2], o[:, 1::2], rho)
+        weight = np.zeros_like(p)
+        weight[:, 0::2] = np.where(active[:, 0::2], t["b1"], 0.0)
+        weight[:, 1::2] = np.where(active[:, 1::2], t["b2"], 0.0)
     elif split in LEGACY_SPLITS:
         raise ValueError(
             f"{split!r} was retired; portfolios are scored under {SPLIT_GROWTH!r} only. "
@@ -421,10 +630,10 @@ def stakes_for(picks: np.ndarray, opts: Options, split: str,
     total = weight.sum(axis=1, keepdims=True)
     flat = total[:, 0] <= 0
     if flat.any():
-        n_legs = active[flat].sum(axis=1, keepdims=True)
-        weight[flat] = np.where(active[flat], 1.0, 0.0) / np.maximum(n_legs, 1)
+        n_props = active[flat].sum(axis=1, keepdims=True)
+        weight[flat] = np.where(active[flat], 1.0, 0.0) / np.maximum(n_props, 1)
         total[flat] = 1.0
-    return cap_stakes(weight / total, active, max_leg_stake), p, o
+    return cap_stakes(weight / total, active, max_leg_stake), p, o, rho
 
 
 def cap_stakes(stakes: np.ndarray, active: np.ndarray,
@@ -474,7 +683,8 @@ def cap_stakes(stakes: np.ndarray, active: np.ndarray,
     return s
 
 
-def metrics(stakes: np.ndarray, p: np.ndarray, o: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def metrics(stakes: np.ndarray, p: np.ndarray, o: np.ndarray,
+            rho: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """``(expected_return, variance)`` per portfolio, as fractions of one stake.
 
     Computed as the plain sums `staking.expected_return` and `staking.variance`
@@ -487,6 +697,18 @@ def metrics(stakes: np.ndarray, p: np.ndarray, o: np.ndarray) -> tuple[np.ndarra
     """
     er = (stakes * o * p).sum(axis=1)
     var = (stakes**2 * o**2 * p * (1.0 - p)).sum(axis=1)
+    if rho is not None:
+        # The covariance term, one per event block: 2 s1 s2 rho sqrt(v1 v2). Zero
+        # wherever the block holds one proposition, because `rho` is zero there.
+        #
+        # Without this the variance of a paired portfolio is the variance it would
+        # have if its pairs were unrelated -- too low, and in the direction that
+        # flatters. It is the second of the four places the correlation has to
+        # land; see `pair_terms` for what missing one costs.
+        s1, s2 = stakes[:, 0::2], stakes[:, 1::2]
+        v1 = (o[:, 0::2] ** 2) * p[:, 0::2] * (1.0 - p[:, 0::2])
+        v2 = (o[:, 1::2] ** 2) * p[:, 1::2] * (1.0 - p[:, 1::2])
+        var = var + 2.0 * (s1 * s2 * np.asarray(rho) * np.sqrt(v1 * v2)).sum(axis=1)
     return er, var
 
 
@@ -495,7 +717,8 @@ def metrics(stakes: np.ndarray, p: np.ndarray, o: np.ndarray) -> tuple[np.ndarra
 
 def threshold_probs_batch(pay: np.ndarray, p: np.ndarray,
                           thresholds=THRESHOLDS, grid: int = GRID,
-                          chunk: int = CHUNK) -> np.ndarray:
+                          chunk: int = CHUNK, *,
+                          rho: np.ndarray | None = None) -> np.ndarray:
     """``P(return > t)`` for every portfolio and every ``t``. Shape ``(m, len(t))``.
 
     ``pay`` is each leg's payout as a fraction of the total stake -- ``s_i * o_i``
@@ -523,7 +746,8 @@ def threshold_probs_batch(pay: np.ndarray, p: np.ndarray,
 
     for lo in range(0, m, chunk):
         hi = min(lo + chunk, m)
-        dist, step = return_pmf(pay[lo:hi], p[lo:hi], grid)
+        dist, step = return_pmf(pay[lo:hi], p[lo:hi], grid,
+                                rho=None if rho is None else rho[lo:hi])
         cdf = np.cumsum(dist, axis=1)
         # P(R > t) = 1 - P(R <= t); a threshold above the largest reachable
         # return lands past the last cell and correctly reads probability zero.
@@ -769,7 +993,7 @@ def build_pool(opts: Options, *, min_legs: int | str | None = None,
         return np.empty((0, n_ev), dtype=np.int16), {"mode": "empty", "space": 0.0}
 
     space = opts.space(min_legs, max_legs)
-    terms = [leg_terms(opts.p[j], opts.o[j]) for j in range(n_ev)]
+    terms = [option_terms(opts, j) for j in range(n_ev)]
 
     if opts.enumeration_cost(min_legs) <= exhaustive_max:
         picks = _enumerate_all(opts, min_legs, max_legs)
@@ -1001,12 +1225,12 @@ def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
     large portfolio undominated and blow up the export.
     """
     frames = []
-    terms = [leg_terms(opts.p[j], opts.o[j]) for j in range(opts.n_events)]
+    terms = [option_terms(opts, j) for j in range(opts.n_events)]
     capacity = _sum_terms(picks, opts, terms)["c"]
     for split in splits:
-        stakes, p, o = stakes_for(picks, opts, split)
-        er, var = metrics(stakes, p, o)
-        th = threshold_probs_batch(stakes * o, p, thresholds, grid)
+        stakes, p, o, rho = stakes_for(picks, opts, split)
+        er, var = metrics(stakes, p, o, rho)
+        th = threshold_probs_batch(stakes * o, p, thresholds, grid, rho=rho)
         # (mu/sigma)**2 against the best achievable, sqrt(C). Guarded because a
         # portfolio whose legs all sit at e == 1 has zero of both.
         realised = np.where(var > 0, (er - 1.0) ** 2 / np.where(var > 0, var, 1.0), 0.0)
@@ -1022,7 +1246,12 @@ def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
         df = pd.DataFrame({
             "combo": np.arange(len(picks)),
             "split": split,
-            "legs": (picks >= 0).sum(axis=1),
+            # Two different numbers, and they only coincide without pairs. `events`
+            # is what `leg_var` governs and what the search counts; `legs` is how
+            # many propositions are actually held, which is larger wherever an
+            # option is a pair. Reporting one under both names was the bug.
+            "events": (picks >= 0).sum(axis=1),
+            "legs": (p > 0).sum(axis=1),
             "pct_expected_return": er,
             "variance": var,
             "pct_sd": np.sqrt(var),
@@ -1172,25 +1401,35 @@ def legs(picks: np.ndarray, opts: Options, combo: int, split: str,
     This is the step that turns a row of a results table into something you can
     go and place, so it carries `book` -- an edge you cannot find again is not
     actionable.
+
+    **One row per proposition, not per event.** An option holding a pair expands
+    to two rows from the same match, each with its own price, book and stake --
+    which is what you go and place. `Options.members` says which propositions an
+    option covers.
     """
     row = picks[[combo]]
-    stakes, p, o = stakes_for(row, opts, split)
+    stakes, p, o, _ = stakes_for(row, opts, split)
     out = []
     for j in range(opts.n_events):
         k = int(row[0, j])
         if k < 0:
             continue
-        src = opts.props[(opts.props["event"] == j) & (opts.props["option"] == k)].iloc[0]
-        out.append({
-            "event": opts.codes[j],
-            "fixture": src.get("fixture", f"{src.get('home_team', '')} vs {src.get('away_team', '')}"),
-            "label": src["label"],
-            "p": float(p[0, j]),
-            "o": float(o[0, j]),
-            "book": src.get("book"),
-            "e": float(p[0, j] * o[0, j]),
-            "stake": float(stakes[0, j]) * float(total),
-        })
+        for slot, prop in enumerate(opts.members[j][k]):
+            col = 2 * j + slot
+            if p[0, col] <= 0:
+                continue
+            src = opts.props[(opts.props["event"] == j)
+                             & (opts.props["option"] == prop)].iloc[0]
+            out.append({
+                "event": opts.codes[j],
+                "fixture": src.get("fixture", f"{src.get('home_team', '')} vs {src.get('away_team', '')}"),
+                "label": src["label"],
+                "p": float(p[0, col]),
+                "o": float(o[0, col]),
+                "book": src.get("book"),
+                "e": float(p[0, col] * o[0, col]),
+                "stake": float(stakes[0, col]) * float(total),
+            })
     return pd.DataFrame(out)
 
 
@@ -1199,8 +1438,16 @@ def picks_label(picks_row: np.ndarray, opts: Options) -> str:
 
     Enough to identify the selection at a glance on a crowded sheet, and enough
     to reconstruct it, without spending twenty-six columns on it.
+
+    **One token per proposition, not per option**, so a pair emits both of its
+    legs. That keeps every token a reference into `props` -- which is what the
+    payload's proposition ids are built from -- and keeps this list the same
+    length, and the same order, as the stakes `_stake_fractions` emits beside it.
     """
-    return " ".join(f"{opts.codes[j]}#{k}" for j, k in enumerate(picks_row) if k >= 0)
+    return " ".join(
+        f"{opts.codes[j]}#{prop}"
+        for j, k in enumerate(picks_row) if k >= 0
+        for prop in opts.members[j][int(k)])
 
 
 # --- The whole thing, in order ---------------------------------------------

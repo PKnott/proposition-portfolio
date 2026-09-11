@@ -74,7 +74,7 @@ from .config import (
     PESSIMISM_B,
     SLATE_TAU,
 )
-from .portfolio import GRID, return_pmf
+from .portfolio import GRID, joint_both, return_pmf
 
 
 def suggested_fraction(f_drawdown: float, pay: np.ndarray, p: np.ndarray, *,
@@ -136,12 +136,20 @@ def suggested_fraction(f_drawdown: float, pay: np.ndarray, p: np.ndarray, *,
     return f_drawdown * terms["edge_factor"] * terms["var_factor"], terms
 
 
-def ruin_prob(p: np.ndarray) -> np.ndarray:
+def ruin_prob(p: np.ndarray, rho: np.ndarray | None = None) -> np.ndarray:
     """``P(return == 0)`` per portfolio -- exact, closed form, no distribution.
 
     Every leg's payout is non-negative, so the return is zero if and only if no
-    leg lands: ``prod(1 - p_j)`` over the live legs. Skipped events carry ``p =
-    0`` and contribute a factor of 1, so they fall out on their own.
+    leg lands. Over independent legs that is ``prod(1 - p_j)``; over **event
+    blocks** it is ``prod P00``, the joint probability that neither leg of the
+    block lands, which is what a correlated pair makes different. Skipped events
+    and the empty slot of a single contribute a factor of 1, so they fall out on
+    their own.
+
+    This is the fourth of the four places the correlation has to reach. Two
+    positively correlated legs fail together more often than two unrelated ones,
+    so a paired book returns nothing more often than independence would say --
+    exactly the direction that flatters if it is missed.
 
     Deliberately *not* read off the grid. It needs no distribution, it is exact
     where the grid is quantised, and it is the one number here that is worth
@@ -150,7 +158,12 @@ def ruin_prob(p: np.ndarray) -> np.ndarray:
     Book said so.
     """
     p = np.asarray(p, dtype=float)
-    return np.prod(np.where(p > 0, 1.0 - p, 1.0), axis=1)
+    if rho is None:
+        return np.prod(np.where(p > 0, 1.0 - p, 1.0), axis=1)
+    p1, p2 = p[:, 0::2], p[:, 1::2]
+    both = joint_both(p1, p2, rho)
+    none = 1.0 - p1 - p2 + both                 # P00 for the block
+    return np.prod(np.where((p1 > 0) | (p2 > 0), none, 1.0), axis=1)
 
 
 def growth_rate(f: np.ndarray, dist: np.ndarray, values: np.ndarray) -> np.ndarray:
@@ -285,16 +298,26 @@ def protective_fraction(returns: np.ndarray, f_star: float, *,
 # in the browser.
 
 
-def sweep_prob(p: np.ndarray) -> np.ndarray:
+def sweep_prob(p: np.ndarray, rho: np.ndarray | None = None) -> np.ndarray:
     """``P(every leg lands)`` -- the mirror of `ruin_prob`.
 
     The probability attached to the largest return a portfolio can pay, and
     exact where the grid is quantised. Skipped events carry ``p = 0`` and
     contribute a factor of 1, exactly as they do in `ruin_prob`, rather than
     annihilating the product.
+
+    Over event blocks this is ``prod P11``: correlated legs land together more
+    often too, so the best case is *more* likely on a paired book than
+    independence would say.
     """
     p = np.asarray(p, dtype=float)
-    return np.prod(np.where(p > 0, p, 1.0), axis=1)
+    if rho is None:
+        return np.prod(np.where(p > 0, p, 1.0), axis=1)
+    p1, p2 = p[:, 0::2], p[:, 1::2]
+    both = joint_both(p1, p2, rho)
+    # A block holding one proposition sweeps when that one lands.
+    all_land = np.where(p2 > 0, both, p1)
+    return np.prod(np.where((p1 > 0) | (p2 > 0), all_land, 1.0), axis=1)
 
 
 def f_curve(f_max: float = GROWTH_F_MAX, step: float = GROWTH_F_FINE) -> np.ndarray:
@@ -362,6 +385,7 @@ def outcome_histogram(dist: np.ndarray, values: np.ndarray,
 
 
 def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
+                   rho: np.ndarray | None = None,
                    drawdown: float = GROWTH_DRAWDOWN_D,
                    max_prob: float = GROWTH_DRAWDOWN_P,
                    projection: bool = False, **kw) -> pd.DataFrame:
@@ -389,10 +413,10 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
     p = np.asarray(p, dtype=float)
     # `close_tail` because a pmf that integrates to less than one would
     # under-weight every g(f) by the shortfall -- see `portfolio.return_pmf`.
-    dist, step = return_pmf(pay, p, grid, close_tail=True)
+    dist, step = return_pmf(pay, p, grid, rho=rho, close_tail=True)
     idx = np.arange(grid)
-    p0 = ruin_prob(p)
-    p_max = sweep_prob(p)
+    p0 = ruin_prob(p, rho)
+    p_max = sweep_prob(p, rho)
     fs = f_curve() if projection else None
     at = band_rounds() if projection else None
 
