@@ -34,6 +34,10 @@ The study also caught an error in its own method — a sign flip in the correlat
 model that had overstated a headline result by 35% — which is written up alongside
 the findings rather than quietly corrected.
 
+**→ [The full study: *Edge capacity*](docs/edge-capacity.md)** — what portfolio size
+does to variance, stake and growth; why the split was the bug; and what leg count
+provably cannot fix.
+
 ## How it fits together
 
 | Stage | Notebook | What it does |
