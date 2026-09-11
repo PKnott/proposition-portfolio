@@ -402,3 +402,52 @@ def test_band_rounds_are_unique_and_span_the_horizon():
     assert r[0] == 1 and r[-1] == gr.GROWTH_ROUNDS
     assert len(set(r.tolist())) == len(r)
     assert np.all(np.diff(r) > 0)
+
+
+# --- the drawdown grid ------------------------------------------------------
+
+
+def test_the_published_stake_is_the_grid_cell_not_a_second_search():
+    """One computation, so the selector cannot disagree with the number beside it."""
+    rng = np.random.default_rng(41)
+    p = rng.uniform(0.25, 0.75, (3, 10))
+    o = (1.0 / p) * rng.uniform(1.05, 1.35, (3, 10))
+    s = (1.0 / (p * o)); s = s / s.sum(axis=1, keepdims=True)
+    out = gr.growth_metrics(s * o, p)
+    key = "dd_" + gr.default_drawdown_key()
+    assert out["f_drawdown"].to_numpy() == pytest.approx(out[key].to_numpy())
+
+
+def test_a_default_tolerance_outside_the_grid_is_refused():
+    """A fallback here would restore the two answers the grid exists to remove."""
+    with pytest.raises(ValueError, match="not a cell"):
+        gr.default_drawdown_key(drawdown=0.37, max_prob=0.05)
+
+
+def test_the_grid_is_monotone_in_both_directions():
+    """A looser tolerance can only ever allow a larger stake."""
+    rng = np.random.default_rng(43)
+    p = rng.uniform(0.3, 0.7, 12)
+    o = (1.0 / p) * rng.uniform(1.05, 1.3, 12)
+    s = (1.0 / (p * o)); s = s / s.sum()
+    dist, step = return_pmf((s * o)[None, :], p[None, :], close_tail=True)
+    returns = gr.sample_rounds(dist[0], np.arange(dist.shape[1]) * step[0])
+    grid = gr.drawdown_grid(returns, 0.9)
+    ds, ps = gr.GROWTH_DRAWDOWN_GRID_D, gr.GROWTH_DRAWDOWN_GRID_P
+    for d in ds:                       # a bigger tolerated fall allows more stake
+        row = [grid[f"d{int(d * 100):02d}_p{int(q * 100):02d}"] for q in ps]
+        assert row == sorted(row), f"not monotone in probability at d={d}"
+    for q in ps:                       # a bigger tolerated chance allows more stake
+        col = [grid[f"d{int(d * 100):02d}_p{int(q * 100):02d}"] for d in ds]
+        assert col == sorted(col), f"not monotone in drawdown at p={q}"
+
+
+def test_max_drawdowns_agrees_with_the_probability_it_replaced():
+    """`drawdown_prob` is now a tail count of `max_drawdowns`; they must agree."""
+    rng = np.random.default_rng(45)
+    returns = rng.uniform(0.0, 2.5, (2000, 60))
+    for f in (0.05, 0.2, 0.5):
+        mdd = gr.max_drawdowns(f, returns)
+        for d in (0.1, 0.3, 0.5):
+            assert gr.drawdown_prob(f, returns, drawdown=d) == pytest.approx(
+                float((mdd > d).mean()))

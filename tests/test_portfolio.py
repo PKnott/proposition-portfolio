@@ -608,3 +608,35 @@ def test_a_tighter_floor_yields_fewer_portfolios():
     counts = [len(pf.build_pool(opts, leg_var=lv)[0]) for lv in (0, 3, 6, 12)]
     assert counts == sorted(counts), f"more slack must not yield fewer portfolios: {counts}"
     assert counts[0] < counts[-1]
+
+
+# --- bounding what reaches the page ----------------------------------------
+
+
+def _frontier(n, rng):
+    return pd.DataFrame({
+        "legs": rng.integers(14, 22, n), "capacity": rng.random(n),
+        "pct_expected_return": 1 + rng.random(n) * 0.5,
+        "variance": rng.random(n) * 0.3, "p_over_100": rng.random(n)})
+
+
+@pytest.mark.parametrize("n", [100, 2_500, 9_000, 40_000])
+def test_the_export_cap_thins_rather_than_truncates(n):
+    """Taking the first N would lop off whichever end the sort favours."""
+    rng = np.random.default_rng(n)
+    d = _frontier(n, rng)
+    kept = d[pf.thin_export(d)]
+    assert len(kept) == min(n, pf.EXPORT_MAX)
+    # the corners survive whatever else goes
+    assert kept["capacity"].max() == d["capacity"].max()
+    assert kept["pct_expected_return"].max() == d["pct_expected_return"].max()
+    assert kept["variance"].min() == d["variance"].min()
+    assert kept["p_over_100"].max() == d["p_over_100"].max()
+    # and the shape is kept: every leg count still represented
+    assert set(kept["legs"]) == set(d["legs"])
+
+
+def test_the_export_cap_is_a_no_op_under_the_budget():
+    rng = np.random.default_rng(7)
+    d = _frontier(pf.EXPORT_MAX, rng)
+    assert pf.thin_export(d).all()

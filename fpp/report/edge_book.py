@@ -55,12 +55,15 @@ import pandas as pd
 from ..config import (
     GROWTH_BAND_QUANTILES,
     GROWTH_DRAWDOWN_D,
+    GROWTH_DRAWDOWN_GRID_D,
+    GROWTH_DRAWDOWN_GRID_P,
     GROWTH_DRAWDOWN_P,
     GROWTH_ROUNDS,
     MAX_LEG_STAKE,
     PESSIMISM_B,
     SLATE_TAU,
 )
+from ..config import EXPORT_MAX
 from ..portfolio import SPLIT_EVEN, SPLIT_GROWTH, SPLIT_MINVAR
 from ..spec import TARGETS
 from ..staking import THRESHOLDS, add_edge, best_price, proposition_label
@@ -406,6 +409,11 @@ def _growth_blocks(kept: pd.DataFrame, picks: np.ndarray, opts, *,
                 "k_leverage": _p(rec["k_leverage"]),
                 "breakeven_shift": _p(rec["breakeven_shift"]),
                 "drawdown": {"d": _p(rec["drawdown_d"]), "p": _p(rec["drawdown_p"])},
+                # The stake at every tolerance in the grid, so the page can offer
+                # the risk setting as a choice rather than stating one answer.
+                # The published stake above is this dict's default cell.
+                "drawdown_grid": {k[3:]: _p(v) for k, v in rec.items()
+                                  if isinstance(k, str) and k.startswith("dd_")},
             }
             if not projection:
                 continue
@@ -463,6 +471,11 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         })
 
     kept = scored[scored["undominated"]] if len(scored) else scored
+    # Bound what reaches the page. Usually a no-op; see `portfolio.thin_export`
+    # for the slate shape it is not.
+    if len(kept) > EXPORT_MAX:
+        from ..portfolio import thin_export
+        kept = kept[thin_export(kept)]
     picks_lists = [str(s).split() for s in kept["picks"]] if len(kept) else []
     freq = _selection_frequency(picks_lists, prop_ids)
     for rec in prop_rows:
@@ -537,6 +550,8 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         # fall within `horizon_rounds` rounds) under `drawdown_p`", shrunk for
         # model risk and capped. Read them and the number stops being magic.
         "risk": {
+            "grid_d": list(GROWTH_DRAWDOWN_GRID_D),
+            "grid_p": list(GROWTH_DRAWDOWN_GRID_P),
             "drawdown_d": GROWTH_DRAWDOWN_D,
             "drawdown_p": GROWTH_DRAWDOWN_P,
             "horizon_rounds": GROWTH_ROUNDS,

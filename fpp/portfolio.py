@@ -122,7 +122,13 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import MAX_LEG_STAKE, PAIR_CORRELATION, PAIR_KEEP, PAIRS_ENABLED
+from .config import (
+    EXPORT_MAX,
+    MAX_LEG_STAKE,
+    PAIR_CORRELATION,
+    PAIR_KEEP,
+    PAIRS_ENABLED,
+)
 from .staking import (
     P_CLAMP,
     label_parts,
@@ -1389,6 +1395,61 @@ def filter_portfolios(scored: pd.DataFrame, *, undominated_only: bool = True,
     if sort_by:
         out = out.sort_values(sort_by, ascending=ascending)
     return out.reset_index(drop=True)
+
+
+def thin_export(scored: pd.DataFrame, export_max: int = EXPORT_MAX,
+                buckets: int = BUCKETS) -> np.ndarray:
+    """Boolean mask over an undominated set, capped at `export_max`.
+
+    The frontier is usually small -- 2,360 of 100,000 scored on a normal slate --
+    and this does nothing. It exists for the slate shape that breaks that: on a
+    37-event card at a tight `leg_var`, portfolios differ by which one or two
+    events they drop, return and variance correlate at 0.83, almost nothing
+    dominates anything, and 12% of the pool clears the frontier. That run wrote a
+    35 MB payload and the Edge Book would not build from it.
+
+    Thinning, not truncating. Taking the first `export_max` rows would lop off
+    whichever end the sort favours -- every high-variance book, or every long one.
+    Instead: **protect the extremes**, then keep the best few per bucket of the
+    rest, so what survives spans the same range at lower density. The same shape
+    `_thin` uses on the pool, one level down.
+    """
+    n = len(scored)
+    if n <= export_max:
+        return np.ones(n, dtype=bool)
+
+    keep = np.zeros(n, dtype=bool)
+    # The corners of the space, whatever else goes: the most capacity, the most
+    # return, the least spread, the best chance of profit.
+    for col, sense in (("capacity", +1), ("pct_expected_return", +1),
+                       ("variance", -1), ("p_over_100", +1)):
+        if col in scored:
+            v = scored[col].to_numpy(float)
+            keep[int(np.argmax(v) if sense > 0 else np.argmin(v))] = True
+
+    legs = scored["legs"].to_numpy(np.int64) if "legs" in scored else np.zeros(n, np.int64)
+    cap = (scored["capacity"].to_numpy(float) if "capacity" in scored
+           else scored["pct_expected_return"].to_numpy(float))
+
+    # Buckets sized to the budget, not to `BUCKETS`. The search's 4096 is
+    # resolution for separating states; here it would put fewer than one row in
+    # each cell, so "keep the best per cell" would keep everything and the cap
+    # would never bind. One bucket per slot of the budget, split across the leg
+    # counts present, puts roughly one row in each.
+    n_legs = max(len(np.unique(legs)), 1)
+    cells = max(1, export_max // n_legs)
+    sel = _prune(legs, cap, -cap, cells, 1)
+    keep[sel] = True
+
+    # A bucketed sweep lands under the budget whenever cells collide, and leaving
+    # the remainder unspent is lost coverage rather than saved effort -- the same
+    # argument `_thin` makes about its own band. Top up with the highest-capacity
+    # rows not already taken.
+    if keep.sum() < export_max:
+        spare = np.flatnonzero(~keep)
+        extra = spare[np.argsort(-cap[spare], kind="stable")][:export_max - int(keep.sum())]
+        keep[extra] = True
+    return keep
 
 
 # --- Expanding a portfolio back into bets ----------------------------------

@@ -64,6 +64,9 @@ from .config import (
     GROWTH_BAND_POINTS,
     GROWTH_BAND_QUANTILES,
     GROWTH_DRAWDOWN_D,
+    GROWTH_DRAWDOWN_GRID_D,
+    GROWTH_DRAWDOWN_GRID_P,
+    GROWTH_DRAWDOWN_GRID_POINTS,
     GROWTH_DRAWDOWN_P,
     GROWTH_F_COARSE,
     GROWTH_F_FINE,
@@ -245,14 +248,95 @@ def drawdown_prob(f: float, returns: np.ndarray, *,
     """
     if not np.isfinite(f) or f <= 0:
         return 0.0
+    return float((max_drawdowns(f, returns) > drawdown).mean())
+
+
+def max_drawdowns(f: float, returns: np.ndarray) -> np.ndarray:
+    """Each sampled path's worst fall from a running peak, as a fraction. ``(paths,)``.
+
+    Split out of `drawdown_prob` because **one pass answers every tolerance at
+    once**. A path's worst fall is a single number; ``P(fall > 30%)`` and
+    ``P(fall > 50%)`` are two tail counts of the same array, and the 5%, 10% and
+    25% probabilities are quantiles of it. Computing the array once and reading
+    nine answers off it is what makes a grid of drawdown settings cost about a
+    third more than the single setting it replaces, rather than nine times.
+    """
+    if not np.isfinite(f) or f <= 0:
+        return np.zeros(len(returns))
     mult = (1.0 - f) + f * returns
     if np.any(mult <= 0):
-        return 1.0                      # a reachable wipe-out; every path ruins
+        return np.ones(len(returns))    # a reachable wipe-out; every path ruins
     curve = np.cumsum(np.log(mult), axis=1)         # log bankroll, starting at 0
     peak = np.maximum.accumulate(
         np.concatenate([np.zeros((len(curve), 1)), curve], axis=1), axis=1)
-    below = curve - peak[:, :-1] <= np.log(1.0 - drawdown)
-    return float(below.any(axis=1).mean())
+    return 1.0 - np.exp((curve - peak[:, :-1]).min(axis=1))
+
+
+def drawdown_grid(returns: np.ndarray, f_star: float, *,
+                  drawdowns: tuple[float, ...] = GROWTH_DRAWDOWN_GRID_D,
+                  probs: tuple[float, ...] = GROWTH_DRAWDOWN_GRID_P,
+                  points: int = GROWTH_DRAWDOWN_GRID_POINTS) -> dict[str, float]:
+    """The largest admissible stake at every ``(drawdown, probability)`` pairing.
+
+    Keyed ``"d30_p05"`` and so on, so the page can offer the tolerance as a
+    selector instead of it being a constant that needs a rebuild to change. The
+    settings are a taste, not a derivation -- 30% at 5% over 100 rounds is one
+    point in a space, and it happens to be the point that makes the published
+    stake one-ninth Kelly. Showing the neighbours is showing what that choice
+    costs.
+
+    One sweep of ``f``, and every crossing read off it by linear interpolation.
+    ``P(fall > d)`` is monotone and smooth in ``f``, so interpolating between the
+    two sweep points that bracket a threshold lands well inside the grid spacing
+    -- and costs nothing, where bisecting each of the nine cells separately cost
+    54 extra passes and took this from 130 ms a portfolio to 576.
+    """
+    out: dict[str, float] = {}
+    if not np.isfinite(f_star) or f_star <= 0:
+        return {f"d{int(d * 100):02d}_p{int(p * 100):02d}": float("nan")
+                for d in drawdowns for p in probs}
+
+    fs = np.linspace(GROWTH_F_FINE, f_star, points)
+    table = np.array([[(m > d).mean() for d in drawdowns]
+                      for m in (max_drawdowns(float(f), returns) for f in fs)])
+
+    for di, d in enumerate(drawdowns):
+        col = table[:, di]
+        for p in probs:
+            key = f"d{int(d * 100):02d}_p{int(p * 100):02d}"
+            ok = np.flatnonzero(col < p)
+            if not len(ok):
+                out[key] = 0.0          # even the smallest stake breaches it
+                continue
+            i = int(ok[-1])
+            if i == len(fs) - 1:
+                out[key] = float(fs[i])  # slack all the way to f_star
+                continue
+            # Between `fs[i]` (under the limit) and `fs[i+1]` (over it), take the
+            # `f` where the straight line between them crosses `p`.
+            lo_p, hi_p = col[i], col[i + 1]
+            frac = 0.0 if hi_p <= lo_p else (p - lo_p) / (hi_p - lo_p)
+            out[key] = float(fs[i] + frac * (fs[i + 1] - fs[i]))
+    return out
+
+
+def default_drawdown_key(drawdown: float = GROWTH_DRAWDOWN_D,
+                         max_prob: float = GROWTH_DRAWDOWN_P) -> str:
+    """The grid cell the published stake is read from.
+
+    The published stake comes *out of the grid* rather than from its own search,
+    so there is one computation and the number beside the selector cannot disagree
+    with the selector's own entry for the same setting. That means the default
+    tolerance has to be a cell: raising here rather than silently falling back,
+    because a fallback would restore exactly the two-answers-to-one-question this
+    removes.
+    """
+    if drawdown not in GROWTH_DRAWDOWN_GRID_D or max_prob not in GROWTH_DRAWDOWN_GRID_P:
+        raise ValueError(
+            f"GROWTH_DRAWDOWN_D={drawdown} / _P={max_prob} is not a cell of the "
+            f"grid {GROWTH_DRAWDOWN_GRID_D} x {GROWTH_DRAWDOWN_GRID_P}; add it "
+            f"there or the published stake and the selector would be computed twice")
+    return f"d{int(drawdown * 100):02d}_p{int(max_prob * 100):02d}"
 
 
 def protective_fraction(returns: np.ndarray, f_star: float, *,
@@ -431,8 +515,9 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
         # column that reads back the cap is not a recommendation.
         f_star, _ = optimal_fraction(dist[i], values)
         returns = sample_rounds(dist[i], values, **kw)
-        f_prot, dd = protective_fraction(returns, f_star,
-                                         drawdown=drawdown, max_prob=max_prob)
+        grid = drawdown_grid(returns, f_star)
+        f_prot = grid[default_drawdown_key(drawdown, max_prob)]
+        dd = float((max_drawdowns(f_prot, returns) > drawdown).mean())
         f_sug, terms = suggested_fraction(f_prot, pay[i], p[i])
         # Staking nothing is a real answer, and its growth rate is exactly zero --
         # the bankroll does not move. Reporting NaN there would put a hole in the
@@ -441,6 +526,9 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
             if f_sug > 0 else 0.0
         rec = {
             "p0": float(p0[i]),
+            # Every tolerance in the grid, so the page can offer the risk setting
+            # as a choice. `f_drawdown` above is the cell the published stake uses.
+            **{f"dd_{k}": v for k, v in grid.items()},
             "f_suggested": f_sug,
             "g_suggested": g_sug,
             "f_drawdown": f_prot,
@@ -476,7 +564,8 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
 
 __all__ = [
     "ruin_prob", "sweep_prob", "growth_rate", "optimal_fraction",
-    "sample_rounds", "drawdown_prob", "protective_fraction",
+    "sample_rounds", "drawdown_prob", "max_drawdowns", "drawdown_grid",
+    "protective_fraction",
     "suggested_fraction", "growth_metrics",
     "f_curve", "band_rounds", "wealth_bands", "outcome_histogram",
 ]
