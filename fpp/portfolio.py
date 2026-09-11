@@ -995,24 +995,30 @@ def build_pool(opts: Options, *, min_legs: int | str | None = None,
             raise ValueError(f"min_legs must be an int or 'all', got {min_legs!r}")
         min_legs = n_ev
     max_legs = n_ev if max_legs is None else min(max_legs, n_ev)
+    # Built before the empty check rather than after it, so a run with nothing to
+    # search reports the *same shape* as a run with something to search. It used
+    # to return two keys, and an unpriced form -- which is how a form arrives
+    # before the odds go in -- reached the notebook as `KeyError: 'found'` on a
+    # print, three cells after the funnel had already said `0 priced`. The empty
+    # case is not an error and does not get to be a different record of one.
+    info = {"mode": "empty", "space": 0.0, "n_events": n_ev, "leg_var": leg_var,
+            "min_legs": min_legs, "max_legs": max_legs,
+            "buckets": buckets, "keep_per_cell": keep_per_cell,
+            "found": 0, "pool": 0}
     if n_ev == 0 or min_legs > max_legs:
-        return np.empty((0, n_ev), dtype=np.int16), {"mode": "empty", "space": 0.0}
+        return np.empty((0, n_ev), dtype=np.int16), info
 
-    space = opts.space(min_legs, max_legs)
+    info["space"] = opts.space(min_legs, max_legs)
     terms = [option_terms(opts, j) for j in range(n_ev)]
 
     if opts.enumeration_cost(min_legs) <= exhaustive_max:
         picks = _enumerate_all(opts, min_legs, max_legs)
-        mode = "exhaustive"
+        info["mode"] = "exhaustive"
     else:
         picks = _search(opts, terms, "w", "c", min_legs, max_legs,
                         buckets, keep_per_cell, sign=-1)
-        mode = "searched"
-
-    info = {"mode": mode, "space": space, "n_events": n_ev, "leg_var": leg_var,
-            "min_legs": min_legs, "max_legs": max_legs,
-            "buckets": buckets, "keep_per_cell": keep_per_cell,
-            "found": len(picks)}
+        info["mode"] = "searched"
+    info["found"] = len(picks)
 
     if len(picks) > pool_max:
         picks = _thin(picks, opts, terms, pool_max, buckets, keep_per_cell)

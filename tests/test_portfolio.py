@@ -546,6 +546,24 @@ def test_search_on_a_form_where_nothing_qualifies():
     assert res["scored"].empty
 
 
+def test_an_empty_run_reports_the_same_shape_as_a_full_one():
+    """A form nobody has priced yet is the normal first state of every form.
+
+    `info` is read by the notebook, the workbook and the Edge Book payload, and a
+    shorter dict on the empty path made the *first* run of a new form fail three
+    cells after the funnel had already printed `0 priced` -- on a `KeyError` in a
+    print, which says nothing about odds.
+    """
+    nothing = _form(p=[0.4, 0.4], o=[1.5, 1.5], codes=["A", "B"])   # e = 0.6
+    something = _form(p=[0.5, 0.5], o=[2.4, 2.4], codes=["A", "B"])
+    empty = pf.search(nothing)["info"]
+    full = pf.search(something)["info"]
+    assert set(empty) == set(full) - {"thinned_to"}, "the empty path lost keys"
+    assert empty["mode"] == "empty"
+    assert empty["found"] == empty["pool"] == 0
+    assert empty["space"] == 0.0
+
+
 # --- the leg floor, set relative to whatever qualifies --------------------
 
 
