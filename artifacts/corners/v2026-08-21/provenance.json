@@ -1,0 +1,55 @@
+{
+  "spec_hash": "5d98650c2e48",
+  "scoring_mode": "team",
+  "scoring_hash": "5342c5fa",
+  "git_sha": "788182f",
+  "n_rows": 43178,
+  "data_hash": "clean",
+  "created": "2026-08-21T02:03:13",
+  "tuning_rounds": [
+    {
+      "round": 1,
+      "window": {
+        "L": 45,
+        "alpha": 0.15
+      },
+      "logloss": 2.3664032725202144,
+      "window_moved": true,
+      "params_moved": true
+    },
+    {
+      "round": 2,
+      "window": {
+        "L": 37,
+        "alpha": 0.15
+      },
+      "logloss": 2.3672965290756425,
+      "window_moved": true,
+      "params_moved": false
+    },
+    {
+      "round": 3,
+      "window": {
+        "L": 45,
+        "alpha": 0.15
+      },
+      "logloss": 2.3664032725202144,
+      "window_moved": true,
+      "params_moved": false
+    }
+  ],
+  "converged": false,
+  "tuning_folds": [
+    "2020/2021",
+    "2021/2022",
+    "2022/2023",
+    "2023/2024"
+  ],
+  "holdout": {
+    "season": "2024/2025",
+    "logloss": 2.361138443919946,
+    "n_scored": 3504,
+    "tuning_cv": 2.3664032725202144,
+    "gap": -0.005264828600268334
+  }
+}

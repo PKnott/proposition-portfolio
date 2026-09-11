@@ -1,0 +1,34 @@
+{
+  "selected": [
+    "team_avg_goals_for",
+    "team_avg_goals_against",
+    "team_avg_xg_for",
+    "team_avg_xg_against",
+    "opp_avg_goals_for",
+    "opp_avg_goals_against",
+    "opp_avg_xg_for",
+    "opp_avg_xg_against",
+    "league_avg_goals_for",
+    "league_avg_goals_against",
+    "is_home",
+    "league"
+  ],
+  "provisional": [
+    "team_avg_goals_for",
+    "team_avg_goals_against",
+    "team_avg_xg_for",
+    "team_avg_xg_against",
+    "opp_avg_goals_for",
+    "opp_avg_goals_against",
+    "opp_avg_xg_for",
+    "opp_avg_xg_against",
+    "league_avg_goals_for",
+    "league_avg_goals_against",
+    "is_home",
+    "league"
+  ],
+  "group_winners": {},
+  "shap_rank": [],
+  "logloss": 2.825595712802214,
+  "baseline_logloss": 2.816587272205512
+}

@@ -1,0 +1,26 @@
+{
+  "params": {
+    "objective": "count:poisson",
+    "n_estimators": 394,
+    "learning_rate": 0.05,
+    "max_depth": 2,
+    "max_bin": 64,
+    "enable_categorical": true,
+    "random_state": 2026,
+    "verbosity": 0,
+    "nthread": 1,
+    "min_child_weight": 1,
+    "subsample": 0.85,
+    "colsample_bytree": 0.5,
+    "reg_alpha": 10,
+    "reg_lambda": 0.1
+  },
+  "n_estimators_production": 394,
+  "dispersion": {
+    "Bund": 1000000.0,
+    "Liga": 1000000.0,
+    "Ligue": 1000000.0,
+    "Prem": 32.92185641460469,
+    "Serie": 1000000.0
+  }
+}

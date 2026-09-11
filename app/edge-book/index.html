@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Edge Book</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- A bundled page is opened from file://, where a font request still works but
+     an offline machine's does not. Every family below has a real fallback in the
+     stylesheet, so the page reads correctly either way. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!--EDGE_BOOK_CSS-->
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">Edge Book</div>
+  <nav class="tabs" id="tabs">
+    <button type="button" data-view="match" class="on">Match Board</button>
+    <button type="button" data-view="book">Portfolio Book</button>
+    <button type="button" data-view="projection">Projection Book</button>
+  </nav>
+  <div class="meta" id="run-meta"></div>
+</header>
+<div class="perf"></div>
+
+<main>
+  <section class="view" id="view-match">
+    <div class="ticket-grid" id="tickets"></div>
+    <div id="match-body"></div>
+  </section>
+
+  <section class="view" id="view-book" hidden>
+    <div class="book-layout">
+      <aside class="filter-rail" id="rail"></aside>
+      <div class="pf-panel">
+        <div class="pf-toolbar">
+          <span class="count" id="pf-count"></span>
+          <label>stake
+            <input type="number" id="stake" value="100" min="0" step="10">
+          </label>
+          <button type="button" class="to-match" id="reset-filters">reset filters</button>
+        </div>
+        <div class="pf-scroll" id="pf-scroll">
+          <table class="pf-table" id="pf-table">
+            <thead><tr id="pf-head"></tr></thead>
+            <tbody id="pf-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Every control below lives in the template rather than in the render, for
+       the reason the hash code documents: re-rendering a container detaches the
+       input the pointer is holding, and an input you cannot finish typing into
+       is worse than no input. `renderProjection` writes the panels around them
+       and never the inputs themselves. -->
+  <section class="view" id="view-projection" hidden>
+    <div class="proj-empty" id="proj-empty" hidden></div>
+    <div class="proj-wrap" id="proj-wrap" hidden>
+      <div class="proj-bar">
+        <span class="proj-id" id="proj-id"></span>
+        <label>pot
+          <input type="number" id="pot" value="1000" min="1" step="100">
+        </label>
+        <button type="button" class="to-match" id="proj-back">portfolio book →</button>
+      </div>
+
+      <div class="proj-grid">
+        <section class="panel">
+          <div class="comp-label">Pot over time — p95 / p50 / p5, both stakes</div>
+          <div id="proj-fan"></div>
+        </section>
+
+        <section class="panel">
+          <div class="comp-label">Stake against growth</div>
+          <div class="proj-io">
+            <label>stake %<input type="number" id="in-f" min="1" max="99" step="1"></label>
+            <label>growth %<input type="number" id="in-g" step="0.1"></label>
+          </div>
+          <div id="proj-curve"></div>
+        </section>
+
+        <section class="panel">
+          <div class="comp-label">Return calculator</div>
+          <div class="proj-io">
+            <label>rounds<input type="number" id="in-n" min="1" step="1" value="52"></label>
+            <label>target pot<input type="number" id="in-target" min="1" step="100"></label>
+          </div>
+          <div id="proj-calc"></div>
+        </section>
+
+        <section class="panel">
+          <div class="comp-label">Betting slip</div>
+          <div class="proj-io">
+            <div class="split-picks" id="stake-mode">
+              <button type="button" data-mode="protective">Protective</button>
+              <button type="button" data-mode="star">Max</button>
+              <button type="button" data-mode="custom">Custom</button>
+            </div>
+            <label>stake %<input type="number" id="in-slip-f" min="1" max="99" step="1"></label>
+          </div>
+          <div id="proj-slip"></div>
+        </section>
+
+        <section class="panel span2">
+          <div class="comp-label">This portfolio</div>
+          <div id="proj-stats"></div>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!--EDGE_BOOK_DATA-->
+<!--EDGE_BOOK_JS-->
+</body>
+</html>

@@ -1,0 +1,205 @@
+{
+  "selected": [
+    "team_avg_sot_for",
+    "opp_avg_shots_against_v"
+  ],
+  "provisional": [
+    "team_avg_sot_for",
+    "opp_avg_shots_against_v"
+  ],
+  "provisional_stage1": [
+    "team_avg_xg_for_v",
+    "opp_avg_npxg_for_v",
+    "team_avg_xg_against_v",
+    "opp_avg_xg_against_v",
+    "team_avg_shots_for_v",
+    "team_avg_sot_for",
+    "opp_avg_shots_for_v",
+    "team_avg_shots_against_v",
+    "opp_avg_shots_against_v",
+    "is_home"
+  ],
+  "provisional_stage2": [
+    "team_avg_sot_for",
+    "opp_avg_shots_against_v"
+  ],
+  "provisional_stage3": [
+    "team_avg_sot_for",
+    "opp_avg_shots_against_v"
+  ],
+  "group_winners_stage1": {
+    "team_attack": [
+      "team_avg_xg_for_v"
+    ],
+    "opp_attack": [
+      "opp_avg_npxg_for_v"
+    ],
+    "team_defence": [
+      "team_avg_xg_against_v"
+    ],
+    "opp_defence": [
+      "opp_avg_xg_against_v"
+    ],
+    "team_for": [
+      "team_avg_shots_for_v",
+      "team_avg_sot_for"
+    ],
+    "opp_for": [
+      "opp_avg_shots_for_v"
+    ],
+    "team_against": [
+      "team_avg_shots_against_v"
+    ],
+    "opp_against": [
+      "opp_avg_shots_against_v"
+    ],
+    "context": [
+      "is_home"
+    ],
+    "movement": []
+  },
+  "group_winners_stage2": {
+    "team_attack_merged": [
+      "team_avg_sot_for"
+    ],
+    "team_defence_merged": [],
+    "opp_attack_merged": [],
+    "opp_defence_merged": [
+      "opp_avg_shots_against_v"
+    ],
+    "context": [],
+    "movement": []
+  },
+  "group_winners_stage3": {
+    "team_attack_merged": [
+      "team_avg_sot_for"
+    ],
+    "team_defence_merged": [],
+    "opp_attack_merged": [],
+    "opp_defence_merged": [
+      "opp_avg_shots_against_v"
+    ],
+    "context": [],
+    "movement": []
+  },
+  "merged_groups": {
+    "team_attack_merged": [
+      "team_avg_xg_for_v",
+      "team_avg_shots_for_v",
+      "team_avg_sot_for"
+    ],
+    "team_defence_merged": [
+      "team_avg_xg_against_v",
+      "team_avg_shots_against_v"
+    ],
+    "opp_attack_merged": [
+      "opp_avg_npxg_for_v",
+      "opp_avg_shots_for_v"
+    ],
+    "opp_defence_merged": [
+      "opp_avg_xg_against_v",
+      "opp_avg_shots_against_v"
+    ],
+    "context": [
+      "is_home"
+    ],
+    "movement": []
+  },
+  "groups_kept": [
+    "team_attack_merged",
+    "opp_defence_merged"
+  ],
+  "tol": 0.016455,
+  "retries": {
+    "stage1": {
+      "tol": 0.008424960000000002,
+      "attempts": 4,
+      "fell_back": false
+    },
+    "stage2": {
+      "tol": 0.013164000000000002,
+      "attempts": 2,
+      "fell_back": false
+    },
+    "stage3": {
+      "tol": 0.016455,
+      "attempts": 1,
+      "fell_back": false
+    }
+  },
+  "band_counts": {
+    "stage1": {
+      "band": 10
+    },
+    "stage2": {
+      "band": 5
+    },
+    "stage3": {
+      "band": 2
+    }
+  },
+  "stage_budget": 2.231011292120687,
+  "anchor_logloss": 2.213345063616734,
+  "full_logloss": 2.2035438563319842,
+  "shap_rank": [
+    "team_avg_sot_for",
+    "is_home",
+    "opp_avg_shots_against",
+    "opp_avg_shots_against_v",
+    "team_avg_shots_for_v",
+    "opp_avg_sot_against",
+    "game_week_normalised",
+    "team_avg_shots_for",
+    "team_avg_goals_for",
+    "team_avg_sot_for_v",
+    "team_avg_npxg_for",
+    "team_avg_shots_against_v",
+    "opp_avg_npxg_for_v",
+    "team_avg_xg_for",
+    "league",
+    "team_avg_goals_against",
+    "opp_avg_npxg_against_v",
+    "team_avg_corners_for",
+    "team_avg_xg_for_v",
+    "opp_avg_goals_against",
+    "team_avg_corners_against_v",
+    "team_avg_sot_against",
+    "team_avg_shots_against",
+    "opp_avg_goals_for",
+    "opp_avg_npxg_for",
+    "opp_avg_sot_against_v",
+    "opp_avg_xg_against",
+    "opp_avg_npxg_against",
+    "opp_avg_corners_against",
+    "team_avg_corners_against",
+    "opp_avg_xg_against_v",
+    "opp_avg_shots_for",
+    "team_avg_npxg_for_v",
+    "opp_avg_corners_for",
+    "team_avg_xg_against_v",
+    "team_avg_sot_against_v",
+    "team_avg_corners_for_v",
+    "opp_avg_xg_for",
+    "opp_rest_days",
+    "opp_avg_xg_for_v",
+    "team_avg_goals_against_v",
+    "team_avg_npxg_against_v",
+    "opp_avg_goals_for_v",
+    "team_rest_days",
+    "opp_avg_sot_for_v",
+    "opp_avg_corners_against_v",
+    "opp_avg_goals_against_v",
+    "team_avg_goals_for_v",
+    "opp_avg_corners_for_v",
+    "opp_avg_sot_for",
+    "team_avg_xg_against",
+    "opp_avg_shots_for_v",
+    "team_avg_npxg_against",
+    "team_is_new_to_league",
+    "opp_is_new_to_league",
+    "team_rank_delta",
+    "opp_rank_delta"
+  ],
+  "logloss": 2.2246800629328005,
+  "baseline_logloss": 2.2925775125918126
+}

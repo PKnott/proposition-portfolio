@@ -1,0 +1,45 @@
+# Data — never commit raw or output data
+Inputs/
+Outputs/
+
+# Virtual environment
+bin/
+include/
+lib/
+share/
+pyvenv.cfg
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.pyc
+__pycache__/
+
+# soccerdata cache
+soccerdata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Packaging
+*.egg-info/
+build/
+dist/
+
+# Analysis notebook — being rebuilt, not published yet
+Notebooks/07_Analysis.ipynb
+
+# v1 leftovers — kept on disk, not part of this project's history
+examples/
+Notebooks/Archive/
+edge-book-handoff.pdf
+
+# Local tooling (contains a site-specific scraper); not published
+.claude/

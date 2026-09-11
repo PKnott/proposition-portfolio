@@ -1,0 +1,27 @@
+{
+  "params": {
+    "objective": "reg:tweedie",
+    "n_estimators": 186,
+    "learning_rate": 0.05,
+    "max_depth": 2,
+    "max_bin": 64,
+    "enable_categorical": true,
+    "random_state": 2026,
+    "verbosity": 0,
+    "nthread": 1,
+    "tweedie_variance_power": 1.5,
+    "min_child_weight": 10,
+    "subsample": 0.5,
+    "colsample_bytree": 0.5,
+    "reg_alpha": 20,
+    "reg_lambda": 5
+  },
+  "n_estimators_production": 186,
+  "dispersion": {
+    "Bund": 14.24836147526958,
+    "Liga": 12.812715645332327,
+    "Ligue": 12.852305922607364,
+    "Prem": 6.5932367986577525,
+    "Serie": 15.505010770762828
+  }
+}

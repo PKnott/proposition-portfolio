@@ -1,0 +1,650 @@
+/* Edge Book.
+ *
+ * The component rules below the token block are lifted from the handoff's own
+ * style guide rather than rebuilt from the palette, because the palette is the
+ * half that does not carry: radius, hairline style, the tinted fills behind an
+ * active IN/OUT, the 3px ring that makes a fader handle read as a handle. Rebuilt
+ * from six hex codes this comes out a generic dashboard in the right colours.
+ *
+ * Sections marked "handoff" are ported. Sections marked "app" are the parts a
+ * live page needs that a static mockup did not -- scroll containers, the
+ * windowed table, focus states, empty states.
+ */
+
+/* --- tokens (handoff) ----------------------------------------------------- */
+
+:root{
+  --paper:       #FFF5D0;   /* base bg — dead-stock ticket paper */
+  --paper-raised:#FBEECB;   /* raised panel, slightly deeper */
+  --paper-2:     #F3E3AE;   /* hairline / recessed */
+  --ink:         #2A2727;   /* primary text — near-black brown */
+  --ink-dim:     #6E6863;   /* secondary text */
+  --edge:        #1F5B3E;   /* include / positive / go */
+  --edge-tint:   #DCEAE1;   /* pale green fill for chips/rows */
+  --stake:       #D16002;   /* stake / money / signature accent */
+  --stake-tint:  #F7E1CB;
+  --line:        #D8C68B;   /* hairline rule */
+  --radius: 8px;
+
+  /* app: one row height, so the windowed table's arithmetic and its CSS cannot
+     drift apart. Everything else about the row is the ported .table rule. */
+  --row-h: 42px;
+}
+
+*{ box-sizing:border-box; }
+
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size:15px; line-height:1.5;
+}
+.display{ font-family:'Roboto Slab', Georgia, serif; }
+.mono{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+
+/* --- header (handoff: .wf-topbar, promoted to real chrome) ---------------- */
+
+.app-header{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:12px 18px; background:var(--paper); border:1px solid var(--line);
+  border-radius:var(--radius); margin:18px 24px 0; font-size:12px;
+}
+.app-header .brand{ font-family:'Roboto Slab', Georgia, serif; font-weight:800; font-size:16px; }
+.app-header .tabs{ display:flex; gap:22px; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+.app-header .tabs button{
+  border:none; background:none; padding:2px 0; cursor:pointer;
+  font:inherit; color:var(--ink-dim);
+}
+/* Green and bold, exactly as the handoff marks the active tab -- no underline. */
+.app-header .tabs button.on{ color:var(--edge); font-weight:700; }
+.app-header .tabs button:focus-visible{ outline:2px solid var(--ink); outline-offset:2px; }
+.app-header .meta{ color:var(--ink-dim); font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+
+/* handoff: the perforation strip from .intro::after — the paper-ticket signature.
+   Moved from the document intro to under the header, doing the same job there. */
+.perf{
+  position:relative; height:14px; margin:0 24px;
+}
+.perf::after{
+  content:''; position:absolute; left:0; right:0; bottom:0; height:1px;
+  background-image: radial-gradient(circle, var(--paper) 3px, transparent 3.5px);
+  background-size: 22px 1px; background-repeat: repeat-x;
+  border-top:2px dashed var(--ink);
+}
+
+.stamp{
+  display:inline-block; border:2px solid var(--stake); color:var(--stake);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-weight:700;
+  font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  padding:3px 8px; border-radius:4px; transform:rotate(-3deg);
+}
+
+main{ padding:20px 24px 48px; }
+.view[hidden]{ display:none; }
+
+.comp-label{
+  font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim);
+  margin-bottom:16px; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+.comp-card{
+  background:var(--paper-raised); border:1px solid var(--line);
+  border-radius:var(--radius); padding:22px;
+}
+
+/* --- edge bar (handoff) --------------------------------------------------- */
+
+.edgebar-row{ display:flex; align-items:center; gap:14px; }
+.edgebar-row .name{ width:280px; font-size:13px; }
+.edgebar{ position:relative; flex:1; height:10px; background:var(--paper-2); border-radius:6px; }
+.edgebar .fill{ position:absolute; left:0; top:0; height:100%; border-radius:6px; background:var(--edge); }
+.edgebar .fill.neg{ background:var(--stake); }
+/* app: the ported fill is green for E >= 1 and orange below it. A line no book
+   quoted has no edge either way, so it gets neither -- a green bar there reads
+   as "this one is good" when all it means is "the model has an opinion". */
+.edgebar .fill.none{ background:var(--ink-dim); opacity:.35; }
+.edgebar .tick{ position:absolute; top:-3px; width:2px; height:16px; background:var(--ink); opacity:.75; }
+.edgebar-row .e{
+  width:56px; text-align:right;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:13px;
+}
+.edgebar-key{ display:flex; gap:22px; margin-top:8px; font-size:12px; color:var(--ink-dim); }
+.edgebar-key span::before{
+  content:''; display:inline-block; width:10px; height:10px; border-radius:3px;
+  margin-right:6px; vertical-align:-1px;
+}
+.k-fill::before{ background:var(--edge); }
+.k-tick::before{ background:var(--ink); width:2px !important; }
+
+/* --- fader (handoff) ------------------------------------------------------ */
+
+.fader{ display:flex; flex-direction:column; gap:8px; }
+.fader .row1{ display:flex; justify-content:space-between; align-items:baseline; font-size:13px; gap:8px; }
+.fader .row1 .val{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+.fader .track{ position:relative; height:6px; background:var(--paper-2); border-radius:4px; margin:9px 9px 11px; }
+.fader .track .range{ position:absolute; top:0; bottom:0; background:var(--edge); border-radius:4px; }
+
+/* app: two native range inputs stacked on the ported track. The thumb is styled
+   to the handoff's .handle (18px, paper fill, 3px ink ring); using real inputs
+   rather than div handles is what gets arrow keys, Home/End and focus for free
+   on a control the brief asks to be keyboard-usable. */
+.fader .track input[type=range]{
+  position:absolute; left:-9px; right:-9px; top:50%; width:calc(100% + 18px);
+  margin:0; transform:translateY(-50%);
+  -webkit-appearance:none; appearance:none; background:none;
+  pointer-events:none; height:18px;
+}
+.fader .track{ isolation:isolate; }   /* keep the two z-indexes local to one fader */
+.fader .track input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none; pointer-events:auto; cursor:grab;
+  width:18px; height:18px; border-radius:50%;
+  background:var(--paper); border:3px solid var(--ink); box-sizing:border-box;
+}
+.fader .track input[type=range]::-moz-range-thumb{
+  pointer-events:auto; cursor:grab;
+  width:18px; height:18px; border-radius:50%;
+  background:var(--paper); border:3px solid var(--ink); box-sizing:border-box;
+}
+.fader .track input[type=range]:focus{ outline:none; }
+.fader .track input[type=range]:focus-visible::-webkit-slider-thumb{
+  border-color:var(--edge); box-shadow:0 0 0 3px var(--edge-tint);
+}
+.fader .track input[type=range]:focus-visible::-moz-range-thumb{
+  border-color:var(--edge); box-shadow:0 0 0 3px var(--edge-tint);
+}
+.fader .drop{
+  border:none; background:none; cursor:pointer; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:14px;
+  line-height:1; padding:0 2px;
+}
+.fader .drop:hover{ color:var(--stake); }
+
+/* --- tri-state (handoff) -------------------------------------------------- */
+
+.tristate{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--paper);
+}
+.tristate .propname{ font-size:13px; min-width:0; overflow-wrap:anywhere; }
+.tristate .propname .ev{
+  display:block; font-size:11px; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; margin-top:2px;
+}
+.tri-btns{ display:flex; gap:4px; background:var(--paper-2); border-radius:7px; padding:3px; flex-shrink:0; }
+.tri-btns button{
+  border:none; background:transparent; color:var(--ink-dim); font-size:11px;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  padding:5px 9px; border-radius:5px; cursor:pointer;
+}
+.tri-btns button.active-in{ background:var(--edge-tint); color:var(--edge); font-weight:700; }
+.tri-btns button.active-out{ background:var(--stake-tint); color:var(--stake); font-weight:700; }
+/* app: the handoff has no styled "neither" state, but a three-way control that
+   only lights up two of its three positions cannot show which one it is in. */
+.tri-btns button.active-none{ background:var(--paper-raised); color:var(--ink-dim); }
+.tri-btns button:focus-visible{ outline:2px solid var(--ink); outline-offset:1px; }
+
+/* --- tables and pills (handoff) ------------------------------------------- */
+
+.table{ width:100%; border-collapse:collapse; font-size:13px; }
+.table th{
+  text-align:left; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.06em;
+  padding:8px 12px; border-bottom:1px solid var(--line);
+}
+.table td{
+  padding:10px 12px; border-bottom:1px solid var(--line);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+.table tr:hover td{ background:var(--paper-2); }
+.pill{ display:inline-block; padding:2px 8px; border-radius:5px; font-size:11px; }
+.pill.min-var{ background:var(--edge-tint); color:var(--edge); }
+.pill.inv-e{ background:var(--stake-tint); color:var(--stake); }
+.pill.growth{ background:var(--stake-tint); color:var(--stake); }
+
+/* --- fixture tickets (handoff) -------------------------------------------- */
+
+.ticket-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }
+.ticket{
+  background:var(--paper); border:1px solid var(--line); border-radius:8px;
+  padding:12px; position:relative; text-align:left; cursor:pointer;
+  font:inherit; color:inherit;
+}
+.ticket .code{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px; color:var(--ink-dim); }
+.ticket .fx{ font-size:13px; margin:4px 0; }
+.ticket .xg{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:11px; color:var(--stake); }
+.ticket.sel{ border-color:var(--edge); border-width:2px; padding:11px; }
+.ticket:focus-visible{ outline:2px solid var(--ink); outline-offset:2px; }
+
+/* --- match detail (handoff) ----------------------------------------------- */
+
+.match-detail{
+  background:var(--paper); border:1px solid var(--line); border-radius:8px;
+  padding:18px; display:grid; grid-template-columns:1.1fr 1fr; gap:22px;
+}
+.heat{ display:grid; gap:3px; max-width:400px; }
+/* The mockup paints one div per cell in --edge at varying opacity. A cell at 1%
+   then vanishes into the paper and the grid loses its shape, so the square is
+   the track colour and the green is a child on top of it -- same look where
+   there is mass, still a cell where there is not. */
+.heat .cell{ aspect-ratio:1; border-radius:3px; background:var(--paper-2); position:relative; }
+.heat .cell i{ position:absolute; inset:0; border-radius:3px; background:var(--edge); }
+.heat .cell.top{ box-shadow:0 0 0 2px var(--stake); }
+.heat .lab{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px;
+  color:var(--ink-dim); display:flex; align-items:center; justify-content:center;
+}
+.heat .lab.row{ justify-content:flex-end; padding-right:4px; }
+.props-list{ display:flex; flex-direction:column; gap:10px; }
+
+/* --- portfolio book layout (handoff) -------------------------------------- */
+
+.book-layout{ display:grid; grid-template-columns:340px 1fr; gap:16px; align-items:start; }
+.filter-rail{
+  background:var(--paper); border:1px solid var(--line); border-radius:8px;
+  padding:16px; display:flex; flex-direction:column; gap:22px;
+  max-height:calc(100vh - 150px); overflow-y:auto;
+}
+/* A flex column with a max-height shrinks its children to fit rather than
+   scrolling past them -- which squashed every collapsed fixture to a 14px bar
+   with its own text overflowing invisibly. Nothing in either rail may shrink. */
+.filter-rail > *, .prop-list > *{ flex:0 0 auto; }
+.filter-rail h4{
+  margin:0 0 10px; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-dim); font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+
+/* --- app: match board ----------------------------------------------------- */
+
+.match-head{
+  display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+  margin:0 0 14px; padding-bottom:12px; border-bottom:1px dashed var(--line);
+}
+.match-head h2{ font-family:'Roboto Slab', Georgia, serif; font-weight:800; font-size:26px; margin:0; }
+.match-head .code{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px; color:var(--ink-dim);
+}
+.match-head .xg{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:13px; color:var(--stake); font-weight:700;
+}
+.cards{ display:grid; grid-template-columns:repeat(auto-fit, minmax(96px,1fr)); gap:10px; margin-top:8px; }
+.card{
+  background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+}
+.card .k{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px;
+  text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim);
+}
+.card .v{ font-family:'Roboto Slab', Georgia, serif; font-weight:700; font-size:20px; }
+.card .d{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:11px; }
+.up{ color:var(--edge); }
+.down{ color:var(--stake); }
+
+.ladders{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px; margin-top:16px; }
+.ladder{ background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:16px; }
+.ladder h4{
+  margin:0 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-dim); font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+.ladder .side{ margin-top:12px; }
+.ladder .side > .team{ font-size:12px; margin-bottom:6px; }
+.ladder .edgebar-row{ margin:5px 0; }
+.ladder .edgebar-row .name{
+  width:96px; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px;
+}
+.ladder .edgebar-row .e{ width:48px; font-size:12px; }
+.ladder .edgebar-row .e.edge{ width:44px; }
+.ladder .edgebar-row .avg{
+  width:52px; text-align:right;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:11px; color:var(--ink-dim);
+}
+.ladder .lad-head{
+  color:var(--ink-dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; margin-bottom:2px;
+}
+.ladder .lad-head .e, .ladder .lad-head .avg{ font-size:10px; color:var(--ink-dim); }
+.ladder .edgebar.head{ background:none; }
+.section-title{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-weight:700; font-size:12px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-dim); margin:28px 0 14px;
+}
+.prop-jump{
+  border:none; background:none; padding:0; margin:0; font:inherit; color:inherit;
+  text-align:left; cursor:pointer; width:100%;
+}
+.prop-jump:hover .name{ color:var(--edge); }
+.prop-jump:focus-visible{ outline:2px solid var(--ink); outline-offset:2px; border-radius:4px; }
+
+/* --- app: portfolio book -------------------------------------------------- */
+
+.pf-panel{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+.pf-toolbar{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px; color:var(--ink-dim);
+}
+.pf-toolbar input[type=number]{
+  width:96px; padding:5px 8px; border:1px solid var(--line); border-radius:6px;
+  background:var(--paper); color:var(--ink); font:inherit;
+}
+.pf-toolbar .count strong{ color:var(--ink); }
+/* A definite height, not a max-height. The windowed table decides how many rows
+   to build from this box's `clientHeight`, and a box sized by its own content
+   cannot answer that before the rows exist -- it reported one header's worth,
+   got seven rows, and nothing ever asked again. */
+.pf-scroll{
+  border:1px solid var(--line); border-radius:8px; background:var(--paper);
+  overflow:auto; height:calc(100vh - 210px); min-height:320px;
+}
+.pf-table{ width:100%; border-collapse:collapse; font-size:13px; }
+.pf-table thead th{
+  position:sticky; top:0; z-index:1; background:var(--paper);
+  text-align:left; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.06em;
+  padding:8px 12px; border-bottom:1px solid var(--line); cursor:pointer; white-space:nowrap;
+}
+.pf-table thead th .dir{ color:var(--edge); }
+.pf-table thead th:focus-visible{ outline:2px solid var(--ink); outline-offset:-2px; }
+.pf-table td{
+  padding:0 12px; height:var(--row-h); border-bottom:1px solid var(--line);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; white-space:nowrap;
+}
+.pf-table tr.row{ cursor:pointer; }
+.pf-table tr.row:hover td{ background:var(--paper-2); }
+.pf-table tr.row.open td{ background:var(--edge-tint); }
+.pf-table tr.row:focus-visible td{ outline:2px solid var(--ink); outline-offset:-2px; }
+.pf-table td.ret{ color:var(--edge); }
+.pf-table td.arrow{ color:var(--ink-dim); text-align:right; width:28px; }
+.pf-table tr.spacer td{ padding:0; border:none; height:auto; }
+.pf-table tr.legs > td{ padding:0; height:auto; background:var(--paper-raised); }
+.legs-panel{ padding:14px 16px; }
+.legs-panel .legs-head{
+  display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  margin-bottom:10px; font-size:12px; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+.legs-panel table{ width:100%; border-collapse:collapse; font-size:12px; }
+.legs-panel td{
+  padding:7px 8px; border-bottom:1px solid var(--line);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; white-space:nowrap;
+}
+.legs-panel td.prop{ font-family:'Inter', system-ui, sans-serif; white-space:normal; min-width:190px; }
+.legs-panel td.bar{ width:150px; }
+.legs-panel td.cash{ color:var(--stake); }
+.legs-panel .to-match{
+  border:none; background:none; padding:0; font:inherit; color:var(--ink-dim);
+  cursor:pointer; text-decoration:underline dotted;
+}
+.legs-panel .to-match:hover{ color:var(--edge); }
+
+.prop-search{
+  width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:6px;
+  background:var(--paper); color:var(--ink); font:inherit; font-size:12px; margin-bottom:8px;
+}
+.prop-list{ display:flex; flex-direction:column; gap:6px; max-height:520px; overflow-y:auto; }
+.prop-list .tristate .propname{ font-size:12px; }
+
+/* app: one collapsible block per fixture. 128 propositions in a flat run is a
+   scroll; 20 fixtures that open on demand is a list. */
+.ev-block{
+  border:1px solid var(--line); border-radius:8px; background:var(--paper); overflow:hidden;
+}
+.ev-block.is-in{ border-color:var(--edge); }
+.ev-block.is-out{ border-color:var(--stake); }
+.ev-head{ border:none; border-radius:0; padding:8px 9px; }
+.ev-toggle{
+  display:flex; align-items:center; gap:8px; flex:1; min-width:0;
+  border:none; background:none; padding:0; margin:0; font:inherit; color:inherit;
+  text-align:left; cursor:pointer;
+}
+.ev-toggle .chev{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px;
+  color:var(--ink-dim); width:9px; flex-shrink:0;
+}
+.ev-toggle .propname{ font-size:12px; min-width:0; }
+.ev-toggle:focus-visible{ outline:2px solid var(--ink); outline-offset:2px; border-radius:4px; }
+.ev-props{
+  border-top:1px dashed var(--line); background:var(--paper-raised);
+  padding:8px; display:flex; flex-direction:column; gap:6px;
+}
+.ev-props .tristate{ padding:6px 8px; gap:8px; }
+.ev-props .tristate .propname{ font-size:12px; line-height:1.35; }
+.ev-props .tri-btns{ padding:2px; gap:3px; }
+.ev-props .tri-btns button{ padding:4px 7px; font-size:10px; }
+.split-picks{ display:flex; gap:6px; flex-wrap:wrap; }
+.split-picks button{
+  border:1px solid var(--line); background:var(--paper); border-radius:6px;
+  padding:5px 10px; font-size:12px; cursor:pointer; color:var(--ink-dim); font:inherit;
+}
+.split-picks button.on{ background:var(--edge-tint); color:var(--edge); font-weight:600; border-color:var(--edge); }
+.split-picks button:focus-visible{ outline:2px solid var(--ink); outline-offset:1px; }
+
+.add-filter{
+  border:1px dashed var(--line); background:none; border-radius:7px; padding:8px;
+  width:100%; cursor:pointer; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:11px;
+}
+.add-filter:hover{ border-color:var(--edge); color:var(--edge); }
+.add-filter select{
+  width:100%; border:1px solid var(--line); border-radius:7px; padding:7px;
+  background:var(--paper); color:var(--ink); font:inherit; font-size:12px;
+}
+
+.empty{ padding:36px 24px; text-align:center; color:var(--ink-dim); font-size:13px; }
+.empty strong{ color:var(--stake); }
+.empty button{
+  border:1px solid var(--line); background:var(--paper); border-radius:6px;
+  padding:6px 12px; margin-top:12px; cursor:pointer; font:inherit; font-size:12px; color:var(--ink);
+}
+
+/* Wide content scrolls inside its own container; the page never scrolls sideways. */
+@media (max-width: 1100px){
+  .book-layout{ grid-template-columns:1fr; }
+  .filter-rail{ max-height:none; }
+  .ticket-grid{ grid-template-columns:repeat(2,1fr); }
+  .match-detail, .ladders{ grid-template-columns:1fr; }
+}
+
+/* --- Projection Book (app) ------------------------------------------------
+ *
+ * One portfolio, compounded. The palette carries the meaning here: `--edge`
+ * green is g* throughout and `--stake` orange is the protective rate, on the
+ * fan, on the curve's markers and in the calculator's row keys, so the two
+ * never have to be re-learned per panel. The reader's own third rate is plain
+ * ink -- it is a choice, not one of the model's two answers.
+ */
+
+.proj-bar{
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px; color:var(--ink-dim);
+}
+.proj-bar input[type=number]{
+  width:110px; padding:5px 8px; border:1px solid var(--line); border-radius:6px;
+  background:var(--paper); color:var(--ink); font:inherit;
+}
+.proj-bar .proj-id strong{ color:var(--ink); }
+.proj-bar .to-match{
+  border:none; background:none; padding:0; font:inherit; color:var(--ink-dim);
+  cursor:pointer; text-decoration:underline dotted; margin-left:auto;
+}
+.proj-bar .to-match:hover{ color:var(--edge); }
+
+.proj-grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+.proj-grid .panel{
+  background:var(--paper-raised); border:1px solid var(--line);
+  border-radius:var(--radius); padding:20px 22px; min-width:0;
+}
+.proj-grid .span2{ grid-column:1 / -1; }
+@media (max-width:1080px){ .proj-grid{ grid-template-columns:1fr; } }
+
+.proj-empty{ text-align:center; padding:80px 20px; color:var(--ink-dim); }
+.proj-empty p{ margin:6px 0; }
+
+.proj-io{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:12px;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px; color:var(--ink-dim); }
+/* The rail's segmented pills, reused for the slip's stake mode. Sized down to
+   sit on the same baseline as the number box beside them. */
+.proj-io .split-picks button{ padding:5px 9px; font-size:11px; }
+.proj-io label{ display:flex; align-items:center; gap:7px; }
+.proj-io input{
+  width:82px; padding:5px 8px; border:1px solid var(--line); border-radius:6px;
+  background:var(--paper); color:var(--ink); font:inherit;
+}
+
+/* --- charts --------------------------------------------------------------- */
+
+.chart{ width:100%; height:auto; display:block; overflow:visible; }
+.chart .grid{ stroke:var(--line); stroke-width:1; opacity:.55; }
+.chart .axis{ stroke:var(--line); stroke-width:1; }
+/* The pot you started with, and zero growth. Dashed so it reads as a reference
+   rather than a seventh series. */
+.chart .rule{ stroke:var(--ink-dim); stroke-width:1; stroke-dasharray:2 4; opacity:.8; }
+.chart .ax{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:10px; fill:var(--ink-dim); }
+.chart .ax.y{ text-anchor:end; }
+.chart .ax.x{ text-anchor:middle; }
+.chart .ln{ fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+/* `path.area`, not `.area`: the colour rules below are `.chart .r-star` and
+   friends, which set a stroke at the same specificity a bare `.area` would have
+   and, coming later, would win -- putting a hard edge around every band. */
+.chart path.area{ stroke:none; opacity:.16; }
+/* p95 and p5 are the same colour as their median, thinner and dashed: they are
+   the same rate's range, not two more rates. */
+.chart .ln.p95, .chart .ln.p5{ stroke-width:1; stroke-dasharray:3 3; opacity:.75; }
+.chart .mark{ stroke-width:1; stroke-dasharray:3 3; }
+.chart .mark-l{ font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:9px; text-anchor:middle; }
+
+.chart .r-star{ stroke:var(--edge); }
+.chart path.area.r-star{ fill:var(--edge); }
+.chart text.mark-l.r-star{ fill:var(--edge); stroke:none; }
+.chart .r-prot{ stroke:var(--stake); }
+.chart path.area.r-prot{ fill:var(--stake); }
+.chart text.mark-l.r-prot{ fill:var(--stake); stroke:none; }
+.chart .r-custom{ stroke:var(--ink); }
+.chart text.mark-l.r-custom{ fill:var(--ink); stroke:none; }
+.chart .r-curve{ stroke:var(--ink); stroke-width:2; }
+
+.chart-empty{ padding:44px 12px; text-align:center; color:var(--ink-dim); font-size:13px; }
+.chart-foot{
+  display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap;
+  margin-top:10px; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:11px; color:var(--ink-dim);
+}
+.chart-foot .keys{ display:flex; gap:16px; flex-wrap:wrap; }
+.chart-foot .key{ display:flex; align-items:center; gap:6px; }
+.chart-foot .key i{ width:14px; height:3px; border-radius:2px; background:var(--ink-dim); }
+.chart-foot .key.r-star i{ background:var(--edge); }
+.chart-foot .key.r-prot i{ background:var(--stake); }
+
+.panel .read{ font-size:13px; margin:12px 0 0; }
+.panel .read em{ color:var(--stake); font-style:normal; }
+.panel .hint{ font-size:12px; color:var(--ink-dim); margin:12px 0 0; }
+/* Every caveat on this page is load-bearing -- see the note in `renderProjection`
+   about what these numbers assume -- so they are small but never grey-on-grey. */
+.panel .caveat{
+  font-size:11px; color:var(--ink-dim); margin:12px 0 0; padding-top:10px;
+  border-top:1px solid var(--line); line-height:1.5;
+}
+.panel .caveat strong{ color:var(--ink); }
+
+/* --- calculator ----------------------------------------------------------- */
+
+.calc{ width:100%; border-collapse:collapse; font-size:13px; }
+.calc th{
+  text-align:left; padding:0 10px 8px 0; font-weight:600; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:11px;
+  text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--line);
+}
+.calc td{ padding:10px 10px 10px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+.calc tr:last-child td{ border-bottom:none; }
+.calc .k{ font-weight:700; }
+.calc .k.r-star{ color:var(--edge); }
+.calc .k.r-prot{ color:var(--stake); }
+.calc .cash{ color:var(--ink); font-weight:600; }
+.calc .band{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); margin-top:2px; }
+
+/* --- betting slip --------------------------------------------------------
+ *
+ * The one panel that is not about compounding: what to back, where, and for how
+ * much, once. It borrows the calculator's table rhythm rather than the legs
+ * panel's, because it sits beside the calculator and a second set of paddings in
+ * the same row of the grid reads as a second design.
+ */
+
+.slip-head{ font-size:13px; margin:0 0 14px; }
+.slip-head strong.r-star{ color:var(--edge); }
+.slip-head strong.r-prot{ color:var(--stake); }
+.slip-head strong.r-custom{ color:var(--ink); }
+.slip-head strong.cash{ color:var(--stake); }
+/* The ledger's name for this portfolio, set apart because it is a thing to copy
+   rather than a thing to read: `record_bet` takes exactly this string. */
+.slip-ref{
+  float:right; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:11px; color:var(--ink-dim); border:1px solid var(--line);
+  border-radius:5px; padding:1px 7px; background:var(--paper);
+}
+
+.slip, .accounts{ width:100%; border-collapse:collapse; font-size:12px;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+.slip th{
+  text-align:left; padding:0 8px 8px 0; font-weight:600; color:var(--ink-dim);
+  font-size:10px; text-transform:uppercase; letter-spacing:.06em;
+  border-bottom:1px solid var(--line); white-space:nowrap;
+}
+.slip th:last-child, .slip td.cash, .accounts td.cash{ text-align:right; padding-right:0; }
+.slip td, .accounts td{
+  padding:8px 8px 8px 0; border-bottom:1px solid var(--line);
+  vertical-align:top; white-space:nowrap;
+}
+.slip tr:last-child td{ border-bottom:none; }
+/* The only cell allowed to wrap. Everything else is a number or a book name and
+   is more readable clipped to one line than reflowed. */
+.slip td.sel{
+  font-family:'Inter', system-ui, sans-serif; white-space:normal;
+  min-width:150px; width:52%; line-height:1.35;
+}
+/* The fixture above the selection rather than beside it: the slip is half a
+   page wide and 'SV Elversberg vs Bayer Leverkusen' does not fit a column. */
+.slip td.sel .fx{
+  display:block; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:10px; color:var(--ink-dim); margin-bottom:2px;
+}
+.slip td.bk, .accounts td.bk{ color:var(--ink); }
+.slip td.cash, .accounts td.cash{ color:var(--stake); font-weight:600; }
+
+.slip-sub{
+  font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; margin:22px 0 8px;
+}
+.accounts td:first-child{ font-weight:600; }
+.accounts td:nth-child(2){ color:var(--ink-dim); }
+.accounts .tot td{
+  border-bottom:none; border-top:1px solid var(--ink); padding-top:9px;
+  text-transform:uppercase; letter-spacing:.06em; font-size:11px;
+}
+
+/* --- stats ---------------------------------------------------------------- */
+
+.stats{
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+  gap:14px 18px; margin:0;
+}
+.stats .stat{ min-width:0; }
+.stats dt{
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:3px;
+}
+.stats dd{ margin:0; font-size:15px; font-weight:600;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
+/* The one stat the other three columns hide. It is not decoration: a portfolio
+   can read well on return, spread and P(profit) and still return nothing most
+   weeks, and nothing else on the page says so. */
+.stats .warn dd{ color:var(--stake); }
+
+.hist{
+  display:flex; align-items:flex-end; gap:2px; height:96px; margin-top:22px;
+  padding-top:6px; border-bottom:1px solid var(--line);
+}
+.hist i{ flex:1; background:var(--edge); opacity:.55; border-radius:2px 2px 0 0; min-height:1px; }
+.hist i:hover{ opacity:1; }
+.hist-ax{
+  display:flex; justify-content:space-between; margin-top:6px;
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px; color:var(--ink-dim);
+}
