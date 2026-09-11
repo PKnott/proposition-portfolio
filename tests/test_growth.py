@@ -16,6 +16,8 @@ the threshold columns.
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -407,15 +409,30 @@ def test_band_rounds_are_unique_and_span_the_horizon():
 # --- the drawdown grid ------------------------------------------------------
 
 
-def test_the_published_stake_is_the_grid_cell_not_a_second_search():
-    """One computation, so the selector cannot disagree with the number beside it."""
+@pytest.mark.parametrize("bias", [0.0, 0.02])
+def test_the_published_stake_is_the_grid_cell_not_a_second_search(monkeypatch, bias):
+    """One computation, so the selector cannot disagree with the number beside it.
+
+    The cells carry the model-risk haircuts too, so the claim is about the stake
+    the page publishes and not merely about the drawdown limit underneath it. With
+    `bias` at zero the two coincide; the second case is the one that would catch a
+    grid shrunk in a different place, or not at all.
+    """
+    monkeypatch.setattr(
+        gr, "suggested_fraction", partial(gr.suggested_fraction, bias=bias))
     rng = np.random.default_rng(41)
     p = rng.uniform(0.25, 0.75, (3, 10))
     o = (1.0 / p) * rng.uniform(1.05, 1.35, (3, 10))
     s = (1.0 / (p * o)); s = s / s.sum(axis=1, keepdims=True)
     out = gr.growth_metrics(s * o, p)
     key = "dd_" + gr.default_drawdown_key()
-    assert out["f_drawdown"].to_numpy() == pytest.approx(out[key].to_numpy())
+    # Bit for bit, not approximately: the same call on the same inputs.
+    assert list(out["f_suggested"]) == list(out[key])
+    if not bias:
+        assert out["f_drawdown"].to_numpy() == pytest.approx(out[key].to_numpy())
+    else:
+        assert (out[key].to_numpy() < out["f_drawdown"].to_numpy()).all(), \
+            "a pessimism haircut that moved the published stake and not the grid"
 
 
 def test_a_default_tolerance_outside_the_grid_is_refused():

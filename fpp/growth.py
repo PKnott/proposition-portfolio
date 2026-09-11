@@ -519,6 +519,15 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
         f_prot = grid[default_drawdown_key(drawdown, max_prob)]
         dd = float((max_drawdowns(f_prot, returns) > drawdown).mean())
         f_sug, terms = suggested_fraction(f_prot, pay[i], p[i])
+        # Every cell priced the way the published stake is -- the same haircuts
+        # for model error, applied by the same function rather than by a second
+        # multiplication that would have to be kept in step. The default cell is
+        # `f_sug` bit for bit because it is that same call on those same inputs,
+        # which is what lets the page read the published number out of the grid.
+        # Per cell, not once for the row: a default tolerance the dials shrink to
+        # nothing must not zero the eight tolerances around it, and `mu <= 0`
+        # zeroes all nine on its own, which is the honest answer there.
+        cells = {k: suggested_fraction(v, pay[i], p[i])[0] for k, v in grid.items()}
         # Staking nothing is a real answer, and its growth rate is exactly zero --
         # the bankroll does not move. Reporting NaN there would put a hole in the
         # payload for the one case the reader most needs stated plainly.
@@ -527,8 +536,10 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
         rec = {
             "p0": float(p0[i]),
             # Every tolerance in the grid, so the page can offer the risk setting
-            # as a choice. `f_drawdown` above is the cell the published stake uses.
-            **{f"dd_{k}": v for k, v in grid.items()},
+            # as a choice. These are stakes, not raw drawdown limits: each carries
+            # the model-risk haircuts, so `dd_` at the default tolerance *is*
+            # `f_suggested`. `f_drawdown` below is the unshrunk cell it came from.
+            **{f"dd_{k}": v for k, v in cells.items()},
             "f_suggested": f_sug,
             "g_suggested": g_sug,
             "f_drawdown": f_prot,

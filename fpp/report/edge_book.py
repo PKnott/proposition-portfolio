@@ -411,7 +411,11 @@ def _growth_blocks(kept: pd.DataFrame, picks: np.ndarray, opts, *,
                 "drawdown": {"d": _p(rec["drawdown_d"]), "p": _p(rec["drawdown_p"])},
                 # The stake at every tolerance in the grid, so the page can offer
                 # the risk setting as a choice rather than stating one answer.
-                # The published stake above is this dict's default cell.
+                # The published stake above is this dict's default cell -- every
+                # cell carries the same model-risk haircuts, so the two can never
+                # read differently. `edge_factor` and `var_factor` above are kept
+                # as the audit trail for why a cell reads what it reads; the page
+                # does no arithmetic with them.
                 "drawdown_grid": {k[3:]: _p(v) for k, v in rec.items()
                                   if isinstance(k, str) and k.startswith("dd_")},
             }
