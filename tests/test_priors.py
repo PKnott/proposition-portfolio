@@ -61,10 +61,11 @@ def _naive_priors(df: pd.DataFrame, L: int, alpha: float) -> dict[str, np.ndarra
 
 
 @pytest.fixture(scope="module")
-def sample() -> pd.DataFrame:
-    from fpp.clean import load_clean_table
-
-    df = load_clean_table()
+def sample(clean_table) -> pd.DataFrame:
+    # Via the `clean_table` fixture rather than `load_clean_table` directly, so a
+    # checkout with no cached build skips these rather than erroring -- which is
+    # what CI is, and what a reader cloning the repo has.
+    df = clean_table
     teams = sorted(df["team"].unique())[:12]
     return (
         df[df["team"].isin(teams)]

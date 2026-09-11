@@ -241,16 +241,14 @@ def test_estimated_stats_are_sided_too():
 # --- the one claim that needs real data -------------------------------------
 
 
-def test_xg_proxy_recovers_season_aggregate_xg():
+def test_xg_proxy_recovers_season_aggregate_xg(clean_table):
     """The proxy exists because xG is unavailable below the top flight.
 
     Its licence is the measured season-aggregate fit -- 0.875 with shots, SoT and
     goals together. Checked on the real table, because a synthetic one would only
     reproduce whatever relationship it was built with.
     """
-    from fpp.clean import load_clean_table
-
-    top = load_clean_table()
+    top = clean_table
     fits = pr.fit_xg_proxy(top)
     assert set(fits) == {"xg", "npxg"}
 

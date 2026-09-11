@@ -29,9 +29,11 @@ jobs:
           pip install -e .
           pip install pytest
 
-      # The suite runs against a clean checkout: `Inputs/` and `Outputs/` are
-      # gitignored, and the handful of tests that need real data skip themselves
-      # rather than fail. Measured locally: 500 passed, 3 skipped with no data
-      # present, against 501 passed, 2 skipped with it.
+      # Runs against a clean checkout. Nothing the pipeline reads is in the repo:
+      # `Inputs/` and `Outputs/` are gitignored, and the cached clean table lives
+      # in ~/.cache outside the project. Every test that needs any of it routes
+      # through a fixture that skips when it is absent. Measured: 484 passed,
+      # 19 skipped with nothing present, against 501 passed, 2 skipped with
+      # everything.
       - name: Test
         run: pytest tests/ -q
