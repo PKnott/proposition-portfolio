@@ -1,31 +1,64 @@
-# Football Prediction Project
+# proposition-portfolio
 
-A pooled, multi-market football prediction pipeline. Four target families —
-**goals, shots, shots on target, corners** — modelled per team per match, across
-the Premier League, La Liga, Bundesliga, Serie A and Ligue 1 in **one** model per
-family rather than one per league.
+[![tests](https://github.com/PKnott/proposition-portfolio/actions/workflows/tests.yml/badge.svg)](https://github.com/PKnott/proposition-portfolio/actions/workflows/tests.yml)
 
-Outputs a single Excel workbook per run covering every fixture across all five
-leagues: scoreline matrix and full goal markets, plus over/under ladders for
-shots, shots on target and corners, colour-coded against each league's own
-realised rates.
+**Forecast football match statistics, find the bookmaker prices that disagree,
+then build and size a portfolio of those positions.**
 
----
+Four target families — goals, shots, shots on target, corners — modelled per team
+per match across five leagues, priced against six books, and assembled into
+portfolios that are scored on their *exact* discrete return distribution rather
+than a normal approximation. The output is an interactive page you filter, not a
+list you read.
 
-## What changed from v1
+![The Edge Book: portfolio view](edge-book-mockup-portfolio-book.png)
 
-| | v1 | now |
+The forecasting is the input. The interesting half is what comes after it: given
+several dozen propositions whose prices look wrong, which *combination* of them,
+staked how, and with what fraction of a bankroll.
+
+## What it found
+
+The staking model was rebuilt on the back of a study of how portfolio size drives
+variance and stake. Its results are specific, and they are checked in code rather
+than asserted:
+
+| | |
+|---|---|
+| **Sharpe² = Σ Sᵢ²** | Portfolio Sharpe under edge-aware weights is the root of the summed squared leg Sharpes — exactly. Verified to **1e-16** on real slates, and pinned by a test. One scalar, additive over legs, orders every selection. |
+| **The protective stake is 0.111 × Kelly** | A 4,000-path drawdown simulation turns out to compute a fixed fraction of Kelly: r = 0.998, worst residual 6.2%. The risk appetite was three constants nobody could see. |
+| **The old stake split cost ~39% of growth** | Both previous splits allocated on how *quiet* a leg was and ignored its edge. On one real book, minimum-variance put 25.5% of stake on the worst proposition in it and 4.3% on the best. |
+| **Same-match propositions correlate at +0.455** | Measured over 1,438 settled pairs — not assumed. Opposite teams in the same match correlate **negatively** (−0.185), making them worth *more* than an unrelated leg. Placebo across matches: −0.013. |
+
+The study also caught an error in its own method — a sign flip in the correlation
+model that had overstated a headline result by 35% — which is written up alongside
+the findings rather than quietly corrected.
+
+## How it fits together
+
+| Stage | Notebook | What it does |
 |---|---|---|
-| Targets | goals | goals, shots, shots on target, corners |
-| Models | 5 (one per league) | 4 (one per target family, pooled across leagues) |
-| Notebooks | 5 near-identical league notebooks | 6-stage pipeline over one shared package |
-| Logic | duplicated in every notebook | `fpp/` package; notebooks are thin drivers |
-| Validation | one chronological train/val/test split | expanding-window walk-forward CV, test seasons touched once |
-| Tuning | winners hardcoded back into config | alternating window/hyperparameter loop, run to convergence |
-| Output | 5 workbooks | 1 combined workbook, plus a filterable page for the portfolios |
+| Ingest | `00_Data_Pull` | Pull match history |
+| Clean | `01_Cleaning` | One canonical table |
+| Features | `02_Features` | Rolling team form, opponent adjustment, promotion priors |
+| Tune | `03_Tuning` | Walk-forward CV; alternating window/hyperparameter loop |
+| Evaluate | `04_Evaluation` | Held-out seasons, touched once |
+| Predict | `05_Run` | Score fixtures → predictions workbook + blank odds form |
+| **Portfolio** | `06_Split` | Edge detection, portfolio search, staking, the Edge Book |
+| Settle | *(being rebuilt)* | Capture, settle and score what was actually bet |
 
-The five old league notebooks and the original Data Pull are kept in
-`Notebooks/Archive/` for reference.
+`fpp/` holds the logic; the notebooks are thin drivers. The settlement stage is
+being rewritten and is not published yet — `fpp/ledger.py` and `fpp/analysis.py`
+are the machinery it drives.
+
+## Provenance
+
+Carries forward the modelling from
+[`Football_Prediction_Project`](https://github.com/PKnott/Football_Prediction_Project),
+which was a per-league prediction exercise. What changed there: four pooled models
+instead of five per-league ones, walk-forward validation instead of a single split,
+and a package instead of duplicated notebooks. Everything about portfolio
+construction and staking is new, and is what this project is for.
 
 ---
 
@@ -92,7 +125,7 @@ fpp/                        the pipeline package
 ├── artifacts.py            frozen artifacts + RunContext
 ├── evaluate.py             held-out test scoring, significance, calibration
 ├── predict.py              production training and fixture scoring
-├── staking.py              price, edge, (P, O) dominance, the two stake splits
+├── staking.py              price, edge, (P, O) dominance, stake allocation
 ├── portfolio.py            which propositions to back together, and in what mix
 ├── ledger.py               capture, settle, and keep — what we said vs what happened
 ├── analysis.py             the four questions asked of the ledger
@@ -100,8 +133,8 @@ fpp/                        the pipeline package
 
 Notebooks/                  thin drivers — config, calls, display
 ├── 00_Data_Pull  01_Cleaning  02_Features
-├── 03_Tuning     04_Evaluation  05_Run  06_Split  07_Analysis
-└── Archive/                the v1 notebooks
+├── 03_Tuning     04_Evaluation  05_Run  06_Split
+└── (07_Analysis is being rebuilt and is not in this repo)
 
 app/edge-book/                  the Edge Book front end — index.html, css, js
 artifacts/<target>/<version>/   frozen: window, features, params, cv, provenance
@@ -195,6 +228,15 @@ carries its own model probability, so there is no matching back to the
 predictions workbook), keeps the prices that beat the model, and searches for the
 best *mixes* of them.
 
+One control governs the search: **`LEG_VAR`, how many qualifying events a
+portfolio may leave out.** Zero requires one bet from every one of them, which is
+the only setting whose answer is provable — the space collapses to something that
+enumerates, so every portfolio is scored rather than searched. It is deliberately
+*relative*, because how many events qualify is not knowable when you set it: a
+45-fixture weekend might yield 43 events or 37 depending on which markets got
+priced and which cleared `E >= 1`, and an absolute floor typed against a guess
+quietly becomes "skip nothing" if fewer qualify.
+
 Expect the funnel to be steep — and then to open out. A real 39-fixture week gave
 810 propositions on the form, 180 of them priced by at least one book, 57 clearing
 `E >= 1` across 26 events, and 53 after per-event `(P, O)` dominance. Those 53
@@ -232,7 +274,7 @@ double-click it, no server and nothing to install. Three screens:
 and the page keeps them apart deliberately: the Portfolio Book's stake is what
 goes on this portfolio once, and the pot is the bankroll a fraction is taken out
 of every round, so `stake = f × pot`. Four panels — a p95/p50/p5 fan over 100
-rounds for both `g*` and `g protective`; the `g(f)` curve, which reads in either
+rounds at the suggested stake; the `g(f)` curve, which reads in either
 direction (type a stake, get a rate; type a rate, get a stake); a return
 calculator running both ways, pot-after-*n* and rounds-to-target; and every stat
 on the portfolio, including the two the Portfolio Book has nowhere to put —
@@ -299,7 +341,7 @@ otherwise you stake 21% of a pot that stopped existing four losses ago:
 
 ```python
 ledger.open_account(1000)                  # once
-ledger.record_bet("R007-770")              # protective; pot defaults to the balance
+ledger.record_bet("R007-770")              # suggested; pot defaults to the balance
 ledger.record_bet("R007-770", mode="max")  # or growth-optimal
 ledger.record_bet("R007-770", f=0.15)      # or custom -- a fraction you chose
 ledger.record_bet("R007-770", stake=150)   # or custom -- the cash you actually put on
@@ -354,6 +396,76 @@ ESPN id cache, all-competition fixture history, and the shots/SOT/corners parse)
 Re-run `04_Evaluation` against the updated dataset using the existing frozen
 parameters, to check performance still holds. Only re-run `03_Tuning` if it drifts —
 which is exactly what the stability re-check in `03` is there to detect.
+
+---
+
+## Portfolio construction and staking
+
+This is the part the project is named after. Three questions, kept separate
+because they have different answers.
+
+### Which propositions to back together
+
+Only prices that beat the model qualify, and within an event only those on the
+`(P, O)` frontier. A portfolio takes **at most one proposition per event** — a
+rule, not a finding, and every variance figure downstream assumes it.
+
+Taking one from every event is `prod(k_i)` combinations, which enumerates. Letting
+events be skipped is `prod(k_i + 1) - 1`, which on a real form is **2.7 × 10¹¹**
+and does not. So the search is structural instead: every quantity a portfolio is
+judged on is a **sum over its legs**, which makes the reachable space a Minkowski
+sum that a dynamic programme can walk. Where the whole space fits under
+`EXHAUSTIVE_MAX` it is enumerated exactly instead, and the payload records which
+claim it is making.
+
+### How to split the stake across them
+
+Weight each leg by `mu_i / v_i` — inverse variance times edge, where
+`mu_i = o_i p_i - 1`. Write `c_i = mu_i² / v_i` and `w_i = mu_i / v_i`; then with
+`C = Σ c_i` and `W = Σ w_i`:
+
+```
+stake_i              =  w_i / W
+expected return - 1  =  C / W
+variance             =  C / W²
+Sharpe               =  √C
+```
+
+That last line is why there is one split rather than the three this has had. The
+`mu/v` weighting maximises portfolio Sharpe over *every* weighting, and the
+maximum it reaches is the root of the summed squared leg Sharpes exactly. **`C` is
+the one channel leg count enters the model through**, it is additive over legs, and
+adding a leg can never lower it.
+
+`C` is reported and sortable and is deliberately *not* a dominance criterion: the
+largest leg set always wins it, so adding it as a fourth axis would leave almost
+everything undominated. The frontier says what shapes are available; `C` says which
+is worth the most.
+
+### What fraction of the bankroll to stake
+
+One number, `f_suggested`, built in steps that are all reported beside it:
+
+- `f_drawdown` — the largest fraction keeping a serious drawdown unlikely, at the
+  tolerance in `GROWTH_DRAWDOWN_D` / `_P` over `GROWTH_ROUNDS`. Read off the
+  portfolio's **actual discrete distribution**, because at eight to twenty lumpy
+  win/lose outcomes the normal approximation fails exactly where it matters: one
+  portfolio's simulated `P(>100%)` was 75.6% against ~66% from a normal fit to the
+  same mean and SD.
+- `PESSIMISM_B` and `SLATE_TAU` — the mean and spread of the error *shared by every
+  leg on the card*. Both default to zero, and with them off the answer is exactly
+  `f_drawdown`.
+
+Independent per-leg error is deliberately absent, because it costs nothing: if each
+leg's probability is wrong by an independent draw, the extra uncertainty is exactly
+offset by less coin-flip variance in the outcome. Simulated books from 6 to 96 legs
+are indistinguishable from a perfect model. Only the *shared* part survives
+diversification, and only the shared part is priced.
+
+There used to be a second published stake, the growth optimum. It was dropped: it
+sat at its own ceiling on 66% of exported portfolios and 99% of those with sixteen
+or more legs, so the column was reading back a constant. Offering that as one of
+two choices was worse than offering one answer.
 
 ---
 
@@ -628,7 +740,22 @@ two promotion signals): **59 candidates**. Adding a stat is a one-line change to
   nothing captures those yet.
 - **Portfolio outcomes assume independence.** Safe by construction — a portfolio
   takes at most one proposition per event — but it is the rule that makes it safe,
-  not an argument about the propositions.
+  not an argument about the propositions. Measured since, over 1,438 same-match
+  pairs: +0.455 for a team's same stat, +0.267 for its different stat, −0.185 for
+  opposite teams. So the rule is conservative rather than necessary, and relaxing
+  it is worth ~1.3× capacity — but only with the joint distribution priced
+  properly, which is not done yet.
+- **Two settled slates.** Everything about *level* — whether the edge is real —
+  rests on two weeks of results. The staking model is conditional on the model's
+  probabilities throughout: if they are optimistic by more than about 8 percentage
+  points across the board, the whole structure describes an efficient way to lose
+  money.
+- **`PESSIMISM_B` and `SLATE_TAU` are placeholders at zero.** They are the two
+  terms that price the model being wrong, and neither has evidence behind it. The
+  two settled slates ran *hot*, not optimistic, so a positive haircut today would
+  be caution wearing the clothes of a measurement.
+- **Between-slate variance is unmeasured**, and it is the one quantity leg count
+  provably cannot reduce. Two observations: 0.901 and 1.884.
 - **The portfolio search is not exhaustive above ~2e6 combinations.** It keeps the
   `(expected return, variance)` frontier exactly and a band around it. Measured
   against full enumeration on a real 26-event form: 87 of 90 frontier portfolios,

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fpp"
 version = "0.1.0"
-description = "Pooled multi-market football prediction pipeline (goals, shots, shots on target, corners)"
+description = "Forecast football markets, find mispriced propositions, and build and size a portfolio of them"
 requires-python = ">=3.11"
 dependencies = [
     "soccerdata>=1.9",
