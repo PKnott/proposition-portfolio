@@ -847,10 +847,21 @@
     return m.key === 'custom' ? state.customF : pf[m.fk];
   };
 
-  /* House order, consulted only to settle a tie the minimum has already left
-     open. The spellings are the display names `staking.BOOKS` writes into the
-     payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'. */
-  const BOOK_ORDER = ['10bet', 'BoyleSports', 'BetMGM', 'Virgin Bet', 'Paddy Power', 'Bet365'];
+  /* House order, consulted to settle a tie the minimum has already left open.
+     The spellings are the display names `staking.BOOKS` writes into the
+     payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'.
+
+     Betfair Exchange heads it, and unlike the rest of this order it is not just
+     a tie-break: see `EXCHANGE` below. */
+  const BOOK_ORDER = ['Betfair Exchange', '10bet', 'BoyleSports', 'BetMGM',
+                      'Paddy Power', 'Bet365'];
+  /* The one book that outranks the fewest-accounts rule. An exchange does not
+     restrict or close an account that keeps winning, which is the constraint
+     the rest of this slip is shaped around, so a leg it has matched at the top
+     price goes there even when that opens an account the minimum would have
+     avoided. It never buys a worse price -- only legs already tied for best are
+     ever candidates. */
+  const EXCHANGE = 'Betfair Exchange';
   const bookRank = b => { const i = BOOK_ORDER.indexOf(b); return i < 0 ? BOOK_ORDER.length : i; };
   /** Rank first, then name, so a book nobody listed still sorts the same way twice. */
   const byBook = (a, b) => bookRank(a) - bookRank(b) || (a < b ? -1 : a > b ? 1 : 0);
@@ -864,10 +875,11 @@
   /** One bookmaker per leg, chosen to open the fewest accounts.
    *
    *  `staking.best_price` names *every* book that matched the top price rather
-   *  than picking one, so a leg reading 'BetMGM / Virgin Bet' is a free choice
-   *  and this is where it gets made. Minimum accounts decides first and
-   *  `BOOK_ORDER` only breaks what is left -- a preference that cost an extra
-   *  account would be the preference deciding, which is not what it is for.
+   *  than picking one, so a leg reading 'BetMGM / Bet365' is a free choice and
+   *  this is where it gets made. Betfair Exchange takes any leg it tied for
+   *  first; of what remains, minimum accounts decides and `BOOK_ORDER` only
+   *  breaks what is left -- a sportsbook preference that cost an extra account
+   *  would be the preference deciding, which is not what it is for.
    *
    *  What this deliberately cannot do: the payload carries the best price and
    *  who matched it, not the ladder behind it, so no leg is ever moved to a
@@ -877,9 +889,16 @@
   function chooseBooks(legs) {
     const cands = legs.map(({ prop }) => !prop || !prop.book ? []
       : String(prop.book).split('/').map(t => t.trim()).filter(Boolean));
-    const need = cands.map((c, i) => [i, c]).filter(([, c]) => c.length);
-    const universe = [...new Set(cands.flat())].sort(byBook);
     const out = new Map();
+
+    // The exchange is settled before the covering problem is posed: every leg
+    // it matched is assigned to it and drops out, so the minimum below is the
+    // fewest *sportsbook* accounts for the legs that are actually left.
+    cands.forEach((c, i) => { if (c.includes(EXCHANGE)) out.set(i, EXCHANGE); });
+
+    const need = cands.map((c, i) => [i, c])
+      .filter(([i, c]) => c.length && !out.has(i));
+    const universe = [...new Set(need.flatMap(([, c]) => c))].sort(byBook);
     if (!need.length) return out;
 
     const covers = (set, c) => c.some(b => set.includes(b));
@@ -1243,15 +1262,36 @@
     const p2 = v => Math.round(v * 100) / 100;
     const cashOf = st => (st == null || f == null ? null : p2(st * f * state.pot));
 
-    const rows = legs.map(({ prop, stake }, k) => {
-      if (!prop) return '';
-      const b = books.get(k), c = cashOf(stake);
-      return `<tr>
-        <td class="sel"><span class="fx">${esc(prop.fixture || prop.event)}</span>
-          ${esc(prop.proposition)}</td>
-        <td>${num(prop.e, 4)}</td>
-        <td>${num(prop.odds)}</td>
-        <td class="bk">${b ? esc(b) : '—'}</td>
+    /* Ordered the way it is placed: one account at a time, and inside an
+       account one match at a time. The old order was the portfolio's own --
+       whatever order the search happened to pick the legs in -- which reads
+       fine as a list and is miserable at the counter, because it sends you
+       back to a book you have already left. `byBook` puts the exchange at the
+       top, so the least restricted account is the one filled first. */
+    const placed = legs.map(({ prop, stake }, k) => ({
+      prop, stake, k,
+      book: books.get(k) || null,
+      fx: prop ? String(prop.fixture || prop.event || '') : '',
+    })).filter(r => r.prop);
+    placed.sort((a, b) =>
+      byBook(a.book || '\uffff', b.book || '\uffff')
+      || (a.fx < b.fx ? -1 : a.fx > b.fx ? 1 : 0)
+      || a.k - b.k);
+
+    /* A book's name is printed once, on the row that opens its block, and the
+       rows under it are indented rather than repeating it. The blank book cell
+       is the grouping: seeing the name again would say a second account. */
+    const rows = placed.map((r, i) => {
+      const opens = i === 0 || placed[i - 1].book !== r.book;
+      const newFx = opens || placed[i - 1].fx !== r.fx;
+      const c = cashOf(r.stake);
+      return `<tr class="${opens ? 'bk-open' : ''}">
+        <td class="sel">${newFx
+          ? `<span class="fx">${esc(r.fx)}</span>` : ''}
+          ${esc(r.prop.proposition)}</td>
+        <td>${num(r.prop.e, 4)}</td>
+        <td>${num(r.prop.odds)}</td>
+        <td class="bk">${opens ? (r.book ? esc(r.book) : '—') : ''}</td>
         <td class="cash">${c == null ? '—' : money(c)}</td>
       </tr>`;
     }).join('');
@@ -1312,10 +1352,12 @@
     return head + `<table class="slip"><thead><tr>
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
       </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
-      <p class="caveat">Books are picked to open the <strong>fewest accounts</strong>, never to
-      give up a price: a leg quoted the same at two books goes to whichever one the rest of the
-      slip already needs. Legs are rounded to the penny before anything is added up, so every
-      total is the sum of the rows above it.</p>`;
+      <p class="caveat">Grouped by account, then by match, in the order it is placed.
+      A leg that <strong>Betfair Exchange</strong> matched at the best price goes there —
+      an exchange has no account to lose. The rest are picked to open the
+      <strong>fewest accounts</strong>, never to give up a price: a leg quoted the same at two
+      books goes to whichever one the slip already needs. Legs are rounded to the penny before
+      anything is added up, so every total is the sum of the rows above it.</p>`;
   }
 
   function histPanel(pr) {

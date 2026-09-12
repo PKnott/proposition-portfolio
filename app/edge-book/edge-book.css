@@ -647,6 +647,14 @@ main{ padding:20px 24px 48px; }
   font-size:10px; color:var(--ink-dim); margin-bottom:2px;
 }
 .slip td.bk, .accounts td.bk{ color:var(--ink); }
+/* The slip is grouped by account and then by match, so a book's name is printed
+   once and the rows beneath it belong to the same account. The rule above the
+   opening row is what makes that a block rather than a list with gaps in a
+   column; the name is weighted to match, because it is a heading doing a cell's
+   job. */
+.slip tr.bk-open td{ border-top:1px solid var(--line); }
+.slip tr.bk-open:first-child td{ border-top:none; }
+.slip tr.bk-open td.bk{ font-weight:600; }
 .slip td.cash, .accounts td.cash{ color:var(--stake); font-weight:600; }
 
 .slip-sub{

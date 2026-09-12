@@ -99,21 +99,35 @@ THRESHOLDS = (0.90, 1.00, 1.10)
 # definition: the form writes these headers, the form reader parses them back, and
 # `best_price` reports which of them won. Adding a book is a line here.
 #
-# Betfair was dropped after a coverage check: the "Betfair" column on the odds
-# comparison this is filled from is the *Exchange*, which priced 3 of 122 sampled
-# propositions and none of the team shot, shot-on-target or corner markets this
-# model actually asks about.
+# Virgin Bet was dropped on 2026-09-13. Its feed on the comparison page this is
+# filled from had been frozen since 1 September -- every `VE` price on a match
+# carried one identical timestamp eleven days stale, while the live books
+# re-quoted hourly -- and the site had already removed it from its own bookmaker
+# catalogue, so nothing a visitor sees was ever showing those prices. Stale
+# prices are worse than absent ones here: `best_price` takes the row max, so a
+# frozen quote wins rows it should not and invents the edge on them. On the
+# 2026-09-12 slate it was the sole best price on 23 of 762 priced rows, leading
+# by a median of 5% and by as much as 20%.
 #
-# The order here is the column order on the form, and the keys are the column
-# names the whole pipeline uses. Nothing downstream of `best_price` sees a book
-# column at all, so this set can change without touching `06_Split`.
+# Betfair Exchange replaces it, and is deliberately the *first* key here. It had
+# been dropped once on coverage -- 3 of 122 sampled propositions, none of them
+# shots or corners -- and that is still the expectation: it will price the goals
+# markets and little else. It earns its column on a different axis. An exchange
+# does not restrict or close a winning account, so where it matches the best
+# price it is the one to take, and this order is what says so: it is the column
+# order on the form, the order `best_price` names joint winners in, and the head
+# of the Edge Book's house order.
+#
+# The keys are the column names the whole pipeline uses. Nothing downstream of
+# `best_price` sees a book column at all, so this set can change without
+# touching `06_Split`.
 BOOKS: dict[str, str] = {
+    "betfair": "Betfair Exchange",
     "b365": "Bet365",
     "paddypower": "Paddy Power",
     "tenbet": "10bet",
     "boylesports": "BoyleSports",
     "betmgm": "BetMGM",
-    "virginbet": "Virgin Bet",
 }
 BOOK_COLUMNS: tuple[str, ...] = tuple(BOOKS)
 
