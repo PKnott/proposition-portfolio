@@ -242,20 +242,50 @@ def test_every_portfolio_spends_the_whole_stake(split, cap):
 def test_the_leg_cap_binds_without_ever_losing_stake():
     """`MAX_LEG_STAKE` holds, except where no allocation could satisfy it.
 
-    Six legs cannot each hold under 15%, so the cap relaxes per row to the
-    equal-weight floor. Clipping to an unreachable limit instead would leave the
-    row staking less than the whole amount -- a different bet from the one scored.
+    Six legs cannot each hold under 15%, so the cap relaxes per row to
+    `CAP_RELIEF` times equal weight. Clipping to an unreachable limit instead
+    would leave the row staking less than the whole amount -- a different bet from
+    the one scored.
     """
     rng = np.random.default_rng(31)
-    opts = _random_options(rng, 9)
+    # Fourteen events, not nine: with `CAP_RELIEF` at 2.0 the flat 0.15 only beats
+    # the relief floor from fourteen legs up, so a smaller pool would assert the
+    # cap binds over rows where it cannot.
+    opts = _random_options(rng, 14)
     picks, _ = pf.build_pool(opts, min_legs=1)
     stakes, p, _, _ = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
     n_props = (p > 0).sum(axis=1)          # propositions held, not events backed
     assert stakes.sum(axis=1) == pytest.approx(1.0)
-    row_limit = np.maximum(0.15, 1.0 / np.maximum(n_props, 1))
+    row_limit = pf.row_cap(n_props, 0.15)
     assert (stakes.max(axis=1) <= row_limit + 1e-9).all()
     # and it is not a no-op: something in the pool must actually be capped
-    assert (n_props >= 7).any() and (stakes.max(axis=1)[n_props >= 7] <= 0.15 + 1e-9).all()
+    long_rows = n_props >= 14
+    assert long_rows.any() and (stakes.max(axis=1)[long_rows] <= 0.15 + 1e-9).all()
+
+
+def test_the_relaxed_cap_leaves_a_short_row_its_growth_ordering():
+    """The floor is a multiple of equal weight, not equal weight itself.
+
+    At `1 / n` the cap is uniquely feasible below seven legs, so every short
+    portfolio comes out equal-weighted and the split is replaced rather than
+    constrained. That is the regression this pins: a six-leg row must still rank
+    its legs the way the growth weights do.
+    """
+    rng = np.random.default_rng(31)
+    opts = _random_options(rng, 6)
+    picks, _ = pf.build_pool(opts, min_legs=6)
+    row = picks[[0]]
+    uncapped, p, _, _ = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    capped, _, _, _ = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
+    live = p[0] > 0
+    assert capped.sum(axis=1) == pytest.approx(1.0)
+    assert live.sum() <= 2 * opts.n_events
+    # not flattened: the spread survives, and the ordering is preserved *weakly* --
+    # pro-rata redistribution can tie two legs at the cap, which is a constraint
+    # binding rather than the split being overruled, so it must never invert them.
+    a, b = capped[0][live], uncapped[0][live]
+    assert a.std() > 0
+    assert ((b[:, None] > b[None, :]) <= (a[:, None] >= a[None, :] - 1e-12)).all()
 
 
 def test_the_growth_split_agrees_with_staking_on_one_portfolio():

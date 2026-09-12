@@ -448,6 +448,23 @@ SLATE_TAU = 0.0
 # capacity and is reported as `capacity_used` so the cost is visible.
 MAX_LEG_STAKE = 0.15
 
+# How much room the cap leaves a short portfolio, as a multiple of equal weight.
+#
+# `MAX_LEG_STAKE` is unreachable below seven legs -- six legs cannot each hold
+# under 15% -- so `cap_stakes` relaxes it per row. Relaxing to exactly `1 / n`
+# is feasible and *uniquely* feasible: with six legs capped at a sixth, the only
+# allocation summing to one is six equal stakes, and the growth split is erased
+# rather than constrained. Measured on the 12 Sept slate, a three-fixture card
+# whose largest portfolio is six legs, that flattened all 194 exported
+# portfolios to equal stakes and cost 13% of capacity on the top row.
+#
+# At 2.0 the floor is twice equal weight, so a short row keeps the ordering the
+# growth weights give it while still refusing to put a third of the stake on one
+# proposition. Below `n = CAP_RELIEF` the cap cannot bind at all and the row is
+# effectively uncapped, which is the honest answer for two legs: there is no
+# diversification left to protect.
+CAP_RELIEF = 2.0
+
 # --- Paired propositions (`portfolio.event_options`) ----------------------
 #
 # Whether a portfolio may take two propositions from one match, and how many
@@ -735,6 +752,7 @@ __all__ = [
     "PESSIMISM_B",
     "SLATE_TAU",
     "MAX_LEG_STAKE",
+    "CAP_RELIEF",
     "PAIRS_ENABLED",
     "PAIR_KEEP",
     "EXPORT_MAX",

@@ -543,6 +543,10 @@ main{ padding:20px 24px 48px; }
   border-top:1px solid var(--line); line-height:1.5;
 }
 .panel .caveat strong{ color:var(--ink); }
+/* The cap note sits above the accounts table rather than below the slip's other
+   caveats, because it qualifies the stake column itself. No top rule: it reads as
+   a footnote to the table it follows, not as a new section. */
+.panel .cap-note{ border-top:0; padding-top:0; margin-top:8px; color:var(--stake); }
 
 /* --- drawdown tolerance ---------------------------------------------------
  *

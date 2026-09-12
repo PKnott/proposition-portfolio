@@ -1284,6 +1284,21 @@
          ${RUN_CODE ? `<span class="slip-ref" title="what the ledger calls this portfolio"
            >${esc(refOf(pf))}</span>` : ''}</p>`;
 
+    /* The leg cap is a constraint on the split, and where it binds every leg it
+       has replaced the split rather than trimmed it: the stakes below are the
+       cap's, not the growth weights'. Said here because the slip is the only
+       place the stakes are read as instructions. */
+    const capped = pf.legs_at_cap || 0;
+    const capNote = !accounts.length || !capped ? '' : `
+      <p class="caveat cap-note">${capped === pf.legs
+        ? `Every leg is pinned to the leg cap, so the stakes above are the cap's
+           rather than the growth split's.`
+        : `${capped} of ${pf.legs} legs ${capped === 1 ? 'is' : 'are'} pinned to the
+           leg cap; the rest are placed by the growth split.`}
+        ${pf.capacity_used != null
+          ? ` It costs ${pct(1 - pf.capacity_used, 1)} of this selection's capacity.`
+          : ''}</p>`;
+
     const acct = !accounts.length ? '' : `
       <div class="slip-sub">What to have where</div>
       <table class="accounts"><tbody>${accounts.map(([b, v]) => `
@@ -1296,7 +1311,7 @@
 
     return head + `<table class="slip"><thead><tr>
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
-      </tr></thead><tbody>${rows}</tbody></table>${acct}
+      </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
       <p class="caveat">Books are picked to open the <strong>fewest accounts</strong>, never to
       give up a price: a leg quoted the same at two books goes to whichever one the rest of the
       slip already needs. Legs are rounded to the penny before anything is added up, so every

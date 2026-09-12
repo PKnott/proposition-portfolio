@@ -125,6 +125,7 @@ import pandas as pd
 from .config import (
     EXPORT_MAX,
     MAX_LEG_STAKE,
+    CAP_RELIEF,
     PAIR_CORRELATION,
     PAIR_KEEP,
     PAIRS_ENABLED,
@@ -642,8 +643,20 @@ def stakes_for(picks: np.ndarray, opts: Options, split: str,
     return cap_stakes(weight / total, active, max_leg_stake), p, o, rho
 
 
+def row_cap(n_legs: np.ndarray, limit: float = MAX_LEG_STAKE,
+            relief: float = CAP_RELIEF) -> np.ndarray:
+    """The per-row leg cap actually in force: ``max(limit, relief / n_legs)``, <= 1.
+
+    One definition, because `cap_stakes` enforces it and `score_pool` reports how
+    many legs are sitting on it. Deriving it twice is how the report comes to
+    disagree with the allocation it is describing.
+    """
+    return np.minimum(np.maximum(limit, relief / np.maximum(n_legs, 1)), 1.0)
+
+
 def cap_stakes(stakes: np.ndarray, active: np.ndarray,
-               limit: float = MAX_LEG_STAKE) -> np.ndarray:
+               limit: float = MAX_LEG_STAKE,
+               relief: float = CAP_RELIEF) -> np.ndarray:
     """No single leg carries more than `limit` of the stake. Excess spread pro-rata.
 
     Growth weights concentrate by design -- 24% of stake on one leg on R006's full
@@ -657,12 +670,19 @@ def cap_stakes(stakes: np.ndarray, active: np.ndarray,
     them over the line in turn; it converges because each pass either caps a new
     leg or stops, and there are finitely many legs.
 
-    The limit is applied **per row as ``max(limit, 1 / n_legs)``**. Six legs cannot
-    each hold under 15% -- the stake has to go somewhere -- so for short portfolios
-    the cap relaxes to the equal-weight floor, which is the tightest constraint that
-    can be satisfied. Clipping to an unreachable limit instead would silently leave
-    the row staking less than the whole amount, which is a different bet from the
-    one being scored.
+    The limit is applied **per row as ``max(limit, relief / n_legs)``**, capped at
+    1.0. Six legs cannot each hold under 15% -- the stake has to go somewhere -- so
+    for short portfolios the cap has to relax. Clipping to an unreachable limit
+    instead would silently leave the row staking less than the whole amount, which is
+    a different bet from the one being scored.
+
+    ``relief`` is why the floor is not ``1 / n_legs``. That value is feasible and
+    *uniquely* feasible: six legs capped at a sixth admits exactly one allocation,
+    six equal stakes, so the split does not get constrained, it gets replaced. On the
+    12 Sept slate every one of 194 exported portfolios came out equal-weighted for
+    that reason. At `CAP_RELIEF` the floor is a multiple of equal weight, which
+    leaves a short row free to keep the growth ordering; below ``n = relief`` legs
+    the cap cannot bind at all.
 
     `score_pool` reports `capacity_used` alongside, so what the cap costs in
     capacity is always on the row rather than buried in it.
@@ -671,7 +691,7 @@ def cap_stakes(stakes: np.ndarray, active: np.ndarray,
         return stakes
     s = stakes.copy()
     n_legs = active.sum(axis=1, keepdims=True)
-    row_limit = np.maximum(limit, 1.0 / np.maximum(n_legs, 1))
+    row_limit = row_cap(n_legs, limit, relief)
     for _ in range(64):
         over = (s > row_limit + 1e-15) & active
         if not over.any():
@@ -1270,6 +1290,14 @@ def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
             "capacity": capacity,
             "capacity_used": used,
             "max_leg_stake": stakes.max(axis=1),
+            # How many legs are pinned to the cap rather than placed by the split.
+            # `capacity_used` says what the cap cost; this says how much of the
+            # allocation is the cap's work rather than the growth weights'. They
+            # answer different questions, and a short row can lose little capacity
+            # while having every leg dictated -- which is the case worth flagging.
+            "legs_at_cap": (
+                (stakes >= row_cap((p > 0).sum(axis=1))[:, None] - 1e-12) & (p > 0)
+            ).sum(axis=1),
             "n_eff": _effective_legs(stakes, p, o),
             "median_leg_p": np.nanmedian(leg_p, axis=1),
         })
@@ -1561,6 +1589,7 @@ def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
 
 __all__ = [
     "SPLIT_EVEN", "SPLIT_MINVAR", "SPLIT_GROWTH", "SPLITS", "LEGACY_SPLITS",
+    "row_cap",
     "EXHAUSTIVE_MAX", "POOL_MAX", "BUCKETS", "KEEP_PER_CELL", "GRID",
     "DOMINANCE_CRITERIA", "DOMINANCE_SENSES",
     "Options", "qualify", "event_options", "leg_terms",
