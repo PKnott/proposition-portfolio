@@ -847,21 +847,16 @@
     return m.key === 'custom' ? state.customF : pf[m.fk];
   };
 
-  /* House order, consulted to settle a tie the minimum has already left open.
-     The spellings are the display names `staking.BOOKS` writes into the
+  /* House order, consulted only to settle a tie the minimum has already left
+     open. The spellings are the display names `staking.BOOKS` writes into the
      payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'.
 
-     Betfair Exchange heads it, and unlike the rest of this order it is not just
-     a tie-break: see `EXCHANGE` below. */
-  const BOOK_ORDER = ['Betfair Exchange', '10bet', 'BoyleSports', 'BetMGM',
-                      'Paddy Power', 'Bet365'];
-  /* The one book that outranks the fewest-accounts rule. An exchange does not
-     restrict or close an account that keeps winning, which is the constraint
-     the rest of this slip is shaped around, so a leg it has matched at the top
-     price goes there even when that opens an account the minimum would have
-     avoided. It never buys a worse price -- only legs already tied for best are
-     ever candidates. */
-  const EXCHANGE = 'Betfair Exchange';
+     There was briefly an exchange at the head of this list that outranked the
+     fewest-accounts rule outright. If one returns to `staking.BOOKS` that
+     preference is the right shape -- an exchange does not restrict a winning
+     account -- but it belongs on a price that has had commission taken out of
+     it, which is why the column came back off. */
+  const BOOK_ORDER = ['10bet', 'BoyleSports', 'BetMGM', 'Paddy Power', 'Bet365'];
   const bookRank = b => { const i = BOOK_ORDER.indexOf(b); return i < 0 ? BOOK_ORDER.length : i; };
   /** Rank first, then name, so a book nobody listed still sorts the same way twice. */
   const byBook = (a, b) => bookRank(a) - bookRank(b) || (a < b ? -1 : a > b ? 1 : 0);
@@ -876,10 +871,9 @@
    *
    *  `staking.best_price` names *every* book that matched the top price rather
    *  than picking one, so a leg reading 'BetMGM / Bet365' is a free choice and
-   *  this is where it gets made. Betfair Exchange takes any leg it tied for
-   *  first; of what remains, minimum accounts decides and `BOOK_ORDER` only
-   *  breaks what is left -- a sportsbook preference that cost an extra account
-   *  would be the preference deciding, which is not what it is for.
+   *  this is where it gets made. Minimum accounts decides first and
+   *  `BOOK_ORDER` only breaks what is left -- a preference that cost an extra
+   *  account would be the preference deciding, which is not what it is for.
    *
    *  What this deliberately cannot do: the payload carries the best price and
    *  who matched it, not the ladder behind it, so no leg is ever moved to a
@@ -890,14 +884,7 @@
     const cands = legs.map(({ prop }) => !prop || !prop.book ? []
       : String(prop.book).split('/').map(t => t.trim()).filter(Boolean));
     const out = new Map();
-
-    // The exchange is settled before the covering problem is posed: every leg
-    // it matched is assigned to it and drops out, so the minimum below is the
-    // fewest *sportsbook* accounts for the legs that are actually left.
-    cands.forEach((c, i) => { if (c.includes(EXCHANGE)) out.set(i, EXCHANGE); });
-
-    const need = cands.map((c, i) => [i, c])
-      .filter(([i, c]) => c.length && !out.has(i));
+    const need = cands.map((c, i) => [i, c]).filter(([, c]) => c.length);
     const universe = [...new Set(need.flatMap(([, c]) => c))].sort(byBook);
     if (!need.length) return out;
 
@@ -1266,8 +1253,8 @@
        account one match at a time. The old order was the portfolio's own --
        whatever order the search happened to pick the legs in -- which reads
        fine as a list and is miserable at the counter, because it sends you
-       back to a book you have already left. `byBook` puts the exchange at the
-       top, so the least restricted account is the one filled first. */
+       back to a book you have already left. Blocks come in `BOOK_ORDER`, so the
+       slip is filled in the same order every day. */
     const placed = legs.map(({ prop, stake }, k) => ({
       prop, stake, k,
       book: books.get(k) || null,
@@ -1353,11 +1340,10 @@
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
       </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
       <p class="caveat">Grouped by account, then by match, in the order it is placed.
-      A leg that <strong>Betfair Exchange</strong> matched at the best price goes there —
-      an exchange has no account to lose. The rest are picked to open the
-      <strong>fewest accounts</strong>, never to give up a price: a leg quoted the same at two
-      books goes to whichever one the slip already needs. Legs are rounded to the penny before
-      anything is added up, so every total is the sum of the rows above it.</p>`;
+      Books are picked to open the <strong>fewest accounts</strong>, never to give up a price:
+      a leg quoted the same at two books goes to whichever one the slip already needs. Legs are
+      rounded to the penny before anything is added up, so every total is the sum of the rows
+      above it.</p>`;
   }
 
   function histPanel(pr) {

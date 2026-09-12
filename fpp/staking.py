@@ -109,20 +109,20 @@ THRESHOLDS = (0.90, 1.00, 1.10)
 # 2026-09-12 slate it was the sole best price on 23 of 762 priced rows, leading
 # by a median of 5% and by as much as 20%.
 #
-# Betfair Exchange replaces it, and is deliberately the *first* key here. It had
-# been dropped once on coverage -- 3 of 122 sampled propositions, none of them
-# shots or corners -- and that is still the expectation: it will price the goals
-# markets and little else. It earns its column on a different axis. An exchange
-# does not restrict or close a winning account, so where it matches the best
-# price it is the one to take, and this order is what says so: it is the column
-# order on the form, the order `best_price` names joint winners in, and the head
-# of the Edge Book's house order.
+# Betfair Exchange took that column for half a day and came back out, on
+# commission rather than on coverage. The exchange quotes a *back* price and
+# takes its cut out of net winnings, so a 5.50 on the page is about 5.41 at a
+# 2% rate -- while `best_price` compares it gross against sportsbook prices that
+# need no such adjustment. That flatters every row the exchange wins, which is
+# the same fault Virgin Bet was removed for, only smaller and in a direction the
+# form cannot see. The column is worth having once the haircut is applied in
+# `best_price` and not before; the argument for it is unchanged and good --
+# an exchange does not restrict or close a winning account.
 #
-# The keys are the column names the whole pipeline uses. Nothing downstream of
-# `best_price` sees a book column at all, so this set can change without
-# touching `06_Split`.
+# The order here is the column order on the form, and the keys are the column
+# names the whole pipeline uses. Nothing downstream of `best_price` sees a book
+# column at all, so this set can change without touching `06_Split`.
 BOOKS: dict[str, str] = {
-    "betfair": "Betfair Exchange",
     "b365": "Bet365",
     "paddypower": "Paddy Power",
     "tenbet": "10bet",
