@@ -37,6 +37,8 @@ def _form(p, o, codes, labels=None):
         "p": np.asarray(p, dtype=float),
         "b365": np.asarray(o, dtype=float),
         "home_team": "H", "away_team": "A",
+        "team": "H", "target": "corners",
+        "line": np.arange(len(p), dtype=float) + 0.5,
     })
 
 
@@ -68,8 +70,8 @@ def _er_var(picks, opts, split=pf.SPLIT_GROWTH, max_leg_stake=1.0):
     Uncapped by default: the frontier tests compare against the closed forms the
     search ranks on, and the per-leg cap is deliberately a departure from them.
     """
-    stakes, p, o = pf.stakes_for(picks, opts, split, max_leg_stake=max_leg_stake)
-    return pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, split, max_leg_stake=max_leg_stake)
+    return pf.metrics(stakes, p, o, rho)
 
 
 def _frontier_er(picks, opts):
@@ -166,7 +168,7 @@ def test_thresholds_are_monotone_and_bounded():
     rng = np.random.default_rng(11)
     opts = _random_options(rng, 8)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH)
     th = pf.threshold_probs_batch(stakes * o, p, THR)
     assert ((th >= 0) & (th <= 1)).all()
     assert (np.diff(th, axis=1) <= 1e-12).all(), "P(return > t) must fall as t rises"
@@ -192,8 +194,8 @@ def test_metrics_match_the_closed_forms_the_search_ranks_on(split):
     rng = np.random.default_rng(5)
     opts = _random_options(rng, 9)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, split, max_leg_stake=1.0)
-    er, var = pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, split, max_leg_stake=1.0)
+    er, var = pf.metrics(stakes, p, o, rho)
 
     terms = [pf.leg_terms(opts.p[j], opts.o[j]) for j in range(opts.n_events)]
     sums = pf._sum_terms(picks, opts, terms)
@@ -214,8 +216,8 @@ def test_growth_weights_reach_the_capacity_ceiling():
     rng = np.random.default_rng(21)
     opts = _random_options(rng, 9)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, o = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
-    er, var = pf.metrics(stakes, p, o)
+    stakes, p, o, rho = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    er, var = pf.metrics(stakes, p, o, rho)
     capacity = pf._sum_terms(
         picks, opts, [pf.leg_terms(opts.p[j], opts.o[j]) for j in range(opts.n_events)])["c"]
     live = var > 0
@@ -229,30 +231,61 @@ def test_every_portfolio_spends_the_whole_stake(split, cap):
     rng = np.random.default_rng(6)
     opts = _random_options(rng, 7)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, _ = pf.stakes_for(picks, opts, split, max_leg_stake=cap)
+    stakes, p, _, _ = pf.stakes_for(picks, opts, split, max_leg_stake=cap)
     assert stakes.sum(axis=1) == pytest.approx(1.0)
-    # and puts nothing on an event it skipped
-    assert (stakes[picks < 0] == 0).all()
-    assert (p[picks < 0] == 0).all()
+    # and puts nothing on an event it skipped -- both of that event's slots
+    skipped = np.repeat(picks < 0, 2, axis=1)
+    assert (stakes[skipped] == 0).all()
+    assert (p[skipped] == 0).all()
 
 
 def test_the_leg_cap_binds_without_ever_losing_stake():
     """`MAX_LEG_STAKE` holds, except where no allocation could satisfy it.
 
-    Six legs cannot each hold under 15%, so the cap relaxes per row to the
-    equal-weight floor. Clipping to an unreachable limit instead would leave the
-    row staking less than the whole amount -- a different bet from the one scored.
+    Six legs cannot each hold under 15%, so the cap relaxes per row to
+    `CAP_RELIEF` times equal weight. Clipping to an unreachable limit instead
+    would leave the row staking less than the whole amount -- a different bet from
+    the one scored.
     """
     rng = np.random.default_rng(31)
-    opts = _random_options(rng, 9)
+    # Fourteen events, not nine: with `CAP_RELIEF` at 2.0 the flat 0.15 only beats
+    # the relief floor from fourteen legs up, so a smaller pool would assert the
+    # cap binds over rows where it cannot.
+    opts = _random_options(rng, 14)
     picks, _ = pf.build_pool(opts, min_legs=1)
-    stakes, p, _ = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
-    n_legs = (picks >= 0).sum(axis=1)
+    stakes, p, _, _ = pf.stakes_for(picks, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
+    n_props = (p > 0).sum(axis=1)          # propositions held, not events backed
     assert stakes.sum(axis=1) == pytest.approx(1.0)
-    row_limit = np.maximum(0.15, 1.0 / np.maximum(n_legs, 1))
+    row_limit = pf.row_cap(n_props, 0.15)
     assert (stakes.max(axis=1) <= row_limit + 1e-9).all()
-    # and it is not a no-op: on a 9-event pool something must actually be capped
-    assert (n_legs >= 7).any() and (stakes.max(axis=1)[n_legs >= 7] <= 0.15 + 1e-9).all()
+    # and it is not a no-op: something in the pool must actually be capped
+    long_rows = n_props >= 14
+    assert long_rows.any() and (stakes.max(axis=1)[long_rows] <= 0.15 + 1e-9).all()
+
+
+def test_the_relaxed_cap_leaves_a_short_row_its_growth_ordering():
+    """The floor is a multiple of equal weight, not equal weight itself.
+
+    At `1 / n` the cap is uniquely feasible below seven legs, so every short
+    portfolio comes out equal-weighted and the split is replaced rather than
+    constrained. That is the regression this pins: a six-leg row must still rank
+    its legs the way the growth weights do.
+    """
+    rng = np.random.default_rng(31)
+    opts = _random_options(rng, 6)
+    picks, _ = pf.build_pool(opts, min_legs=6)
+    row = picks[[0]]
+    uncapped, p, _, _ = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    capped, _, _, _ = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=0.15)
+    live = p[0] > 0
+    assert capped.sum(axis=1) == pytest.approx(1.0)
+    assert live.sum() <= 2 * opts.n_events
+    # not flattened: the spread survives, and the ordering is preserved *weakly* --
+    # pro-rata redistribution can tie two legs at the cap, which is a constraint
+    # binding rather than the split being overruled, so it must never invert them.
+    a, b = capped[0][live], uncapped[0][live]
+    assert a.std() > 0
+    assert ((b[:, None] > b[None, :]) <= (a[:, None] >= a[None, :] - 1e-12)).all()
 
 
 def test_the_growth_split_agrees_with_staking_on_one_portfolio():
@@ -261,11 +294,18 @@ def test_the_growth_split_agrees_with_staking_on_one_portfolio():
     opts = _random_options(rng, 5)
     picks, _ = pf.build_pool(opts, min_legs=5)
     row = picks[[0]]
-    stakes, p, o = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    # singles only: `staking`'s primitives know nothing about correlated pairs,
+    # and the claim being pinned is that this module does not re-derive them.
+    opts = pf.event_options(pf.qualify(_form(
+        [0.5, 0.4, 0.6], [2.2, 2.8, 1.9], ["A-1", "A-2", "A-3"])), pairs=False)
+    picks, _ = pf.build_pool(opts, min_legs=3)
+    row = picks[[0]]
+    stakes, p, o, rho = pf.stakes_for(row, opts, pf.SPLIT_GROWTH, max_leg_stake=1.0)
+    live = p[0] > 0
     assert stakes[0].sum() == pytest.approx(1.0, rel=1e-12)
-    er, var = pf.metrics(stakes, p, o)
-    assert er[0] == pytest.approx(staking.expected_return(p[0], o[0], stakes[0]))
-    assert var[0] == pytest.approx(staking.variance(p[0], o[0], stakes[0]))
+    er, var = pf.metrics(stakes, p, o, rho)
+    assert er[0] == pytest.approx(staking.expected_return(p[0][live], o[0][live], stakes[0][live]))
+    assert var[0] == pytest.approx(staking.variance(p[0][live], o[0][live], stakes[0][live]))
 
 
 def test_the_retired_splits_refuse_rather_than_guess():
@@ -509,7 +549,8 @@ def test_search_end_to_end():
             p = float(rng.uniform(0.3, 0.8))
             rows.append({"sheet_code": f"EV-{j}", "label": f"EV-{j} #{i}", "p": p,
                          "b365": (1.0 / p) * float(rng.uniform(1.02, 1.2)),
-                         "home_team": "H", "away_team": "A"})
+                         "home_team": "H", "away_team": "A",
+                         "team": "H", "target": "corners", "line": 0.5 + i})
     res = pf.search(pd.DataFrame(rows), min_legs=1)
 
     s = res["scored"]
@@ -533,6 +574,24 @@ def test_search_on_a_form_where_nothing_qualifies():
     res = pf.search(filled)
     assert len(res["picks"]) == 0
     assert res["scored"].empty
+
+
+def test_an_empty_run_reports_the_same_shape_as_a_full_one():
+    """A form nobody has priced yet is the normal first state of every form.
+
+    `info` is read by the notebook, the workbook and the Edge Book payload, and a
+    shorter dict on the empty path made the *first* run of a new form fail three
+    cells after the funnel had already printed `0 priced` -- on a `KeyError` in a
+    print, which says nothing about odds.
+    """
+    nothing = _form(p=[0.4, 0.4], o=[1.5, 1.5], codes=["A", "B"])   # e = 0.6
+    something = _form(p=[0.5, 0.5], o=[2.4, 2.4], codes=["A", "B"])
+    empty = pf.search(nothing)["info"]
+    full = pf.search(something)["info"]
+    assert set(empty) == set(full) - {"thinned_to"}, "the empty path lost keys"
+    assert empty["mode"] == "empty"
+    assert empty["found"] == empty["pool"] == 0
+    assert empty["space"] == 0.0
 
 
 # --- the leg floor, set relative to whatever qualifies --------------------
@@ -597,3 +656,35 @@ def test_a_tighter_floor_yields_fewer_portfolios():
     counts = [len(pf.build_pool(opts, leg_var=lv)[0]) for lv in (0, 3, 6, 12)]
     assert counts == sorted(counts), f"more slack must not yield fewer portfolios: {counts}"
     assert counts[0] < counts[-1]
+
+
+# --- bounding what reaches the page ----------------------------------------
+
+
+def _frontier(n, rng):
+    return pd.DataFrame({
+        "legs": rng.integers(14, 22, n), "capacity": rng.random(n),
+        "pct_expected_return": 1 + rng.random(n) * 0.5,
+        "variance": rng.random(n) * 0.3, "p_over_100": rng.random(n)})
+
+
+@pytest.mark.parametrize("n", [100, 2_500, 9_000, 40_000])
+def test_the_export_cap_thins_rather_than_truncates(n):
+    """Taking the first N would lop off whichever end the sort favours."""
+    rng = np.random.default_rng(n)
+    d = _frontier(n, rng)
+    kept = d[pf.thin_export(d)]
+    assert len(kept) == min(n, pf.EXPORT_MAX)
+    # the corners survive whatever else goes
+    assert kept["capacity"].max() == d["capacity"].max()
+    assert kept["pct_expected_return"].max() == d["pct_expected_return"].max()
+    assert kept["variance"].min() == d["variance"].min()
+    assert kept["p_over_100"].max() == d["p_over_100"].max()
+    # and the shape is kept: every leg count still represented
+    assert set(kept["legs"]) == set(d["legs"])
+
+
+def test_the_export_cap_is_a_no_op_under_the_budget():
+    rng = np.random.default_rng(7)
+    d = _frontier(pf.EXPORT_MAX, rng)
+    assert pf.thin_export(d).all()

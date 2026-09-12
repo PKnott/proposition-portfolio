@@ -32,6 +32,7 @@ fixes carried over from the plan:
 from __future__ import annotations
 
 import json
+import time
 import unicodedata
 from collections.abc import Iterable
 from difflib import SequenceMatcher
@@ -39,9 +40,10 @@ from functools import lru_cache
 
 import pandas as pd
 
-from ..config import LEAGUES, SLUG_TO_KEY, canonical_team, current_season_label
+from ..config import (LEAGUES, SLUG_TO_KEY, canonical_team, current_season_label,
+                      season_sort_key)
 from ..paths import CLUB_MAPPING_ALL, ESPN_TEAM_IDS, FIXTURES_DIR, MAPPING_DIR, SOCCERDATA_CACHE, all_comp_fixtures
-from .retry import ESPN_SITE_API, get_json, with_retry
+from .retry import ESPN_SITE_API, get_json
 from .understat import known_team_names, team_names_by_league
 
 # --- Name normalisation (unchanged behaviour from the notebook) -----------
@@ -332,51 +334,160 @@ def load_name_map(cache_dir=None) -> dict[str, str]:
 
 # --- Fixtures -------------------------------------------------------------
 
+# ESPN publishes a season's match-date list in the ``calendar`` block of *any*
+# scoreboard response for that season. `soccerdata.ESPN.read_schedule` reads that
+# list out of the **cached** season-opener file and then fetches every date on
+# it. Two consequences, and the second one is the expensive one:
+#
+# * ~55 requests per league per run (~257 across the five) for a pull that
+#   normally wants a single day.
+# * The calendar it trusts is whatever was cached the first time the season was
+#   pulled. When La Liga moved its September 2026 fixtures after the calendar was
+#   cached on 19 Aug, 12 Sept was simply not on the list, so no request for it
+#   was ever made. The frame came back empty, the old CSV stayed on disk, and
+#   four matches vanished from the workbook, the odds form and the edge book
+#   without a single error.
+#
+# So we drive the calendar ourselves: refetch it every run -- one ~2KB request
+# per league, which is what makes this *cheaper* rather than more expensive --
+# diff it against the cached copy so a reschedule is reported rather than
+# silently obeyed, and then fetch only the dates that fall inside the requested
+# range. Roughly 10 requests a run instead of 257.
+
+
+def _calendar_dates(payload: dict) -> list[str]:
+    """The ``YYYYMMDD`` match dates in a scoreboard response's calendar block.
+
+    Entries are ISO strings today; the dict form is handled because ESPN returns
+    one for some competitions and a silent empty calendar is the failure mode
+    this whole function exists to stop.
+    """
+    cal = (payload.get("leagues") or [{}])[0].get("calendar") or []
+    out: set[str] = set()
+    for entry in cal:
+        raw = entry.get("startDate") if isinstance(entry, dict) else entry
+        if isinstance(raw, str) and len(raw) >= 10:
+            out.add(raw[:10].replace("-", ""))
+    return sorted(out)
+
+
+def _scoreboard_url(slug: str, day: str) -> str:
+    return f"{ESPN_SITE_API}/{slug}/scoreboard?dates={day}"
+
+
+def refresh_season_calendar(
+    slug: str, season_start: int, cache_dir=None
+) -> tuple[list[str], set[str], set[str]]:
+    """Refetch a league's season match-date list. ``(live, added, removed)``.
+
+    The season-opener file is rewritten in place, so `soccerdata` -- which reads
+    the same path and would otherwise keep the stale list indefinitely -- picks
+    the correction up too.
+    """
+    cache_dir = cache_dir or SOCCERDATA_CACHE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"Schedule_{slug}_{season_start}0701.json"
+
+    cached: set[str] = set()
+    if path.exists():
+        try:
+            cached = set(_calendar_dates(json.loads(path.read_text())))
+        except (json.JSONDecodeError, OSError):
+            cached = set()  # unreadable cache is the same as no cache
+
+    payload = get_json(_scoreboard_url(slug, f"{season_start}0701"))
+    live = _calendar_dates(payload)
+    path.write_text(json.dumps(payload))
+    return live, set(live) - cached, cached - set(live)
+
 
 def pull_fixtures(
-    date_from: str, date_to: str, season: str | None = None, league_keys: list[str] | None = None
+    date_from: str, date_to: str, season: str | None = None,
+    league_keys: list[str] | None = None, cache_dir=None,
 ) -> dict[str, pd.DataFrame]:
     """Upcoming fixtures per league, name-mapped to Understat, written to Inputs/Fixtures.
 
     Dates are ``dd-mm-yyyy``, matching the original notebook's convention.
     """
-    import soccerdata as sd
+    # Imported here rather than at module scope: `ingest.scoreboard` imports from
+    # this module, so a top-level import would be circular. Same reasoning as the
+    # deferred `import soccerdata` in `understat.pull_season`.
+    from .scoreboard import SCOREBOARD_DELAY
 
     # Resolved here, not in the signature: a default argument is evaluated once at
     # import time and would pin the season for the life of the process.
     season = season or current_season_label()
+    # `current_season_label` emits the ESPN '2026-27' shape, which `season_sort_key`
+    # does not read; swapping the dash for a slash puts it in a shape it does, and
+    # leaves the '2026/2027' and '2627' forms other callers may pass untouched.
+    season_start = season_sort_key(season.replace("-", "/"))
     start = pd.to_datetime(date_from, format="%d-%m-%Y", utc=True)
     end = pd.to_datetime(date_to, format="%d-%m-%Y", utc=True) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    in_range = {d.strftime("%Y%m%d")
+                for d in pd.date_range(start.normalize(), end.normalize(), freq="D")}
 
     name_map = load_name_map() if CLUB_MAPPING_ALL.exists() else {}
 
+    cache_dir = cache_dir or SOCCERDATA_CACHE
     out: dict[str, pd.DataFrame] = {}
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
 
     for key in (league_keys or list(LEAGUES)):
         lg = LEAGUES[key]
-        espn = with_retry(sd.ESPN, leagues=lg.understat, seasons=season, data_dir=SOCCERDATA_CACHE)
-        df = with_retry(espn.read_schedule).reset_index()
-        df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
-        df = df.dropna(subset=["date", "home_team", "away_team"])
-        df = df[(df["date"] >= start) & (df["date"] <= end)]
-        if df.empty:
-            print(f"  {key}: no fixtures in range")
-            continue
+        live, added, removed = refresh_season_calendar(lg.espn_slug, season_start, cache_dir)
 
-        unmapped = {t for t in set(df["home_team"]) | set(df["away_team"]) if t not in name_map}
-        report_unmapped(unmapped, cap=6, label=key)
+        # Only drift that touches the window we are pulling can change this run's
+        # answer, so that is what gets reported loudly; the rest is a count.
+        hit = sorted((added | removed) & in_range)
+        if hit:
+            moved = ", ".join(f"+{d}" if d in added else f"-{d}" for d in hit)
+            print(f"  {key}: calendar changed in range ({moved}) -- stale cache would have missed these")
+        elif added or removed:
+            print(f"  {key}: calendar moved outside range (+{len(added)}/-{len(removed)})")
 
-        fixtures = pd.DataFrame({
-            "Date": df["date"].dt.strftime("%Y-%m-%d"),
-            "Home Team": df["home_team"].map(lambda x: name_map.get(x, x)),
-            "Away Team": df["away_team"].map(lambda x: name_map.get(x, x)),
-            "Start Time (UTC)": df["date"].dt.strftime("%H:%M:%S"),
-        })
+        days = sorted(set(live) & in_range)
+        rows: list[dict[str, str]] = []
+        for i, day in enumerate(days):
+            if i:
+                time.sleep(SCOREBOARD_DELAY)
+            payload = get_json(_scoreboard_url(lg.espn_slug, day))
+            # Always rewritten, never read from cache: a fixture inside the pull
+            # window is exactly the thing whose kickoff time is still moving.
+            (cache_dir / f"Schedule_{lg.espn_slug}_{day}.json").write_text(json.dumps(payload))
+
+            for e in payload.get("events") or []:
+                comp = (e.get("competitions") or [{}])[0]
+                sides = {c.get("homeAway"): (c.get("team") or {}).get("name")
+                         for c in comp.get("competitors") or []}
+                when = pd.to_datetime(e.get("date"), utc=True, errors="coerce")
+                if pd.isna(when) or not sides.get("home") or not sides.get("away"):
+                    continue
+                if not (start <= when <= end):
+                    continue  # a date file can carry a neighbouring day's late kickoff
+                rows.append({
+                    "Date": when.strftime("%Y-%m-%d"),
+                    "Home Team": sides["home"],
+                    "Away Team": sides["away"],
+                    "Start Time (UTC)": when.strftime("%H:%M:%S"),
+                })
+
+        fixtures = pd.DataFrame(rows, columns=["Date", "Home Team", "Away Team", "Start Time (UTC)"])
+        if not fixtures.empty:
+            unmapped = {t for t in set(fixtures["Home Team"]) | set(fixtures["Away Team"])
+                        if t not in name_map}
+            report_unmapped(unmapped, cap=6, label=key)
+            for col in ("Home Team", "Away Team"):
+                fixtures[col] = fixtures[col].map(lambda x: name_map.get(x, x))
+            fixtures = fixtures.sort_values(["Date", "Start Time (UTC)", "Home Team"]).reset_index(drop=True)
+
+        # Written even when empty. The old code `continue`d here, which left the
+        # previous run's file on disk -- so "no fixtures found" and "last week's
+        # fixtures" were the same state to every reader downstream.
         dest = FIXTURES_DIR / f"{lg.fixtures_stem}_fixtures.csv"
         fixtures.to_csv(dest, index=False)
         out[key] = fixtures
-        print(f"  {key}: {len(fixtures)} fixtures -> {dest.name}")
+        note = f"{len(fixtures)} fixtures" if len(fixtures) else "no fixtures in range"
+        print(f"  {key}: {note} -> {dest.name}")
     return out
 
 
@@ -503,6 +614,6 @@ __all__ = [
     "normalise_name", "similarity", "best_match", "report_unmapped",
     "MIN_FUZZY_SCORE", "MAPPING_COLUMNS", "MAPPING_GAP_FILL",
     "espn_id_by_name", "build_club_mapping", "load_name_map",
-    "pull_fixtures", "fetch_team_ids",
+    "pull_fixtures", "refresh_season_calendar", "fetch_team_ids",
     "build_team_id_cache", "team_schedule", "pull_all_competition_fixtures",
 ]

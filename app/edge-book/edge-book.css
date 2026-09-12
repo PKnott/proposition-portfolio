@@ -543,6 +543,46 @@ main{ padding:20px 24px 48px; }
   border-top:1px solid var(--line); line-height:1.5;
 }
 .panel .caveat strong{ color:var(--ink); }
+/* The cap note sits above the accounts table rather than below the slip's other
+   caveats, because it qualifies the stake column itself. No top rule: it reads as
+   a footnote to the table it follows, not as a new section. */
+.panel .cap-note{ border-top:0; padding-top:0; margin-top:8px; color:var(--stake); }
+
+/* --- drawdown tolerance ---------------------------------------------------
+ *
+ * Nine cells, and the published one is the point of the whole panel: it carries
+ * the stake accent every other published figure on this page carries, so the
+ * reader can see at a glance which of the nine they have been reading all along.
+ * A selected cell is green, the page's include/go colour, because choosing one
+ * is choosing an appetite and not an error state.
+ */
+
+.dd-grid{ width:100%; border-collapse:collapse; font-size:12px; }
+.dd-grid th{
+  text-align:left; padding:0 8px 8px 0; font-weight:600; color:var(--ink-dim);
+  font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:10px;
+  text-transform:uppercase; letter-spacing:.06em; white-space:nowrap;
+}
+.dd-grid tbody th{ padding:6px 10px 6px 0; border-right:1px solid var(--line); }
+.dd-grid td{ padding:3px 3px 3px 0; }
+.dd-cell{
+  width:100%; border:1px solid var(--line); background:var(--paper); border-radius:6px;
+  padding:7px 8px; cursor:pointer; font:inherit; color:var(--ink); text-align:left;
+}
+.dd-cell .f{
+  display:block; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size:13px; font-weight:600;
+}
+.dd-cell .rel{ display:block; font-size:10px; color:var(--ink-dim); margin-top:1px; }
+/* The published cell reads as published whether or not it is the one selected --
+   losing that under a selection would leave the reader unable to tell the house
+   setting from the one they just tried. */
+.dd-cell.pub{ border-color:var(--stake); }
+.dd-cell.pub .rel{ color:var(--stake); }
+.dd-cell.on{ background:var(--edge-tint); border-color:var(--edge); }
+.dd-cell.on .f{ color:var(--edge); }
+.dd-cell:hover{ border-color:var(--ink-dim); }
+.dd-cell:focus-visible{ outline:2px solid var(--ink); outline-offset:1px; }
 
 /* --- calculator ----------------------------------------------------------- */
 

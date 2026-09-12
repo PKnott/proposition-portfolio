@@ -89,6 +89,21 @@ def load_upcoming_fixtures(
         df = df[df["date"] >= pd.Timestamp(date_from)]
     if date_to is not None:
         df = df[df["date"] <= pd.Timestamp(date_to)]
+
+    # A league that contributes nothing to a range other leagues *did* fill is
+    # the shape a stale fixtures file takes downstream: the workbook, the odds
+    # form and the edge book are each complete and internally consistent with a
+    # league missing from all three. `check_fixture_coverage` cannot see it --
+    # it checks teams within the fixtures it is handed, and these fixtures were
+    # never handed to anyone. So it is called out here, at the only point where
+    # "which leagues were asked for" and "which leagues answered" both exist.
+    if len(df):
+        silent = [k for k in (league_keys or list(LEAGUES)) if k not in set(df["league_key"])]
+        if silent:
+            print(f"  WARNING: no fixtures for {', '.join(silent)} in this range, "
+                  f"but {len(df)} across {df['league_key'].nunique()} other league(s). "
+                  f"Check Inputs/Fixtures -- a stale file reads as an empty one.")
+
     return df.sort_values(["date", "league_key", "home_team"]).reset_index(drop=True)
 
 

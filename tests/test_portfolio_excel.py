@@ -34,7 +34,10 @@ def result():
             p = float(rng.uniform(0.25, 0.85))
             rows.append({"sheet_code": f"EV-{j:02d}", "label": f"EV-{j:02d} line {i}",
                          "p": p, "b365": (1.0 / p) * float(rng.uniform(1.03, 1.25)),
-                         "home_team": f"Home {j}", "away_team": f"Away {j}"})
+                         "home_team": f"Home {j}", "away_team": f"Away {j}",
+                         # As a real form carries them -- `event_options` prices a
+                         # pair's correlation off these three.
+                         "team": f"Home {j}", "target": "corners", "line": 0.5 + i})
     return pf.search(pd.DataFrame(rows), min_legs=1)
 
 

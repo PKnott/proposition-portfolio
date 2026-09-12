@@ -55,12 +55,15 @@ import pandas as pd
 from ..config import (
     GROWTH_BAND_QUANTILES,
     GROWTH_DRAWDOWN_D,
+    GROWTH_DRAWDOWN_GRID_D,
+    GROWTH_DRAWDOWN_GRID_P,
     GROWTH_DRAWDOWN_P,
     GROWTH_ROUNDS,
     MAX_LEG_STAKE,
     PESSIMISM_B,
     SLATE_TAU,
 )
+from ..config import EXPORT_MAX
 from ..portfolio import SPLIT_EVEN, SPLIT_GROWTH, SPLIT_MINVAR
 from ..spec import TARGETS
 from ..staking import THRESHOLDS, add_edge, best_price, proposition_label
@@ -300,17 +303,18 @@ def _selection_frequency(picks_lists: list[list[str]], ids: list[str]) -> dict[s
 def _stake_fractions(kept: pd.DataFrame, picks: np.ndarray, opts) -> list[list[float]]:
     """Each exported portfolio's per-leg stakes, as fractions of the total.
 
-    Computed here rather than in the browser, deliberately. The two splits are
-    closed forms -- `1/e` and `1/(o^2 p (1-p))`, both normalised -- and a
-    JavaScript copy of them would be small, correct on the day it was written,
-    and completely untested. That is the shape of every "second derivation that
-    happens to agree today" this pipeline has already been bitten by. `stakes_for`
-    is the one definition, `tests/test_staking.py` pins it, and the page just
-    multiplies by whatever is in the stake box.
+    Computed here rather than in the browser, deliberately. The split is a closed
+    form and a JavaScript copy of it would be small, correct on the day it was
+    written, and completely untested. That is the shape of every "second
+    derivation that happens to agree today" this pipeline has already been bitten
+    by. `stakes_for` is the one definition, `tests/test_staking.py` pins it, and
+    the page just multiplies by whatever is in the stake box.
 
-    Ordered to match `picks`: `picks_label` walks events in index order and emits
-    the ones that are backed, which is exactly the order the non-skipped columns
-    come out of `stakes_for` in.
+    **One stake per proposition, not per event.** `stakes_for` returns two slots
+    per event, the second filled only where the option is a pair, so a portfolio
+    holding a pair emits two stakes for that match. The order matches `picks`:
+    events in index order, and within an event the pair's first leg then its
+    second -- which is the order `legs` expands them in.
     """
     from ..portfolio import stakes_for
 
@@ -321,9 +325,11 @@ def _stake_fractions(kept: pd.DataFrame, picks: np.ndarray, opts) -> list[list[f
     for split, sub in kept.groupby("split", sort=False):
         combos = sub["combo"].to_numpy()
         rows = picks[combos]
-        stakes, _, _ = stakes_for(rows, opts, str(split))
-        for label, row, st in zip(sub.index, rows, stakes):
-            out[positions[label]] = [round(float(v), 6) for v in st[row >= 0]]
+        stakes, prob, _, _ = stakes_for(rows, opts, str(split))
+        # A slot is a real bet when it carries a probability; that covers skipped
+        # events and the empty second slot of a single in one test.
+        for label, st, pr in zip(sub.index, stakes, prob):
+            out[positions[label]] = [round(float(v), 6) for v in st[pr > 0]]
     assert all(v is not None for v in out), "a portfolio was left without stakes"
     return out  # type: ignore[return-value]
 
@@ -385,8 +391,8 @@ def _growth_blocks(kept: pd.DataFrame, picks: np.ndarray, opts, *,
     positions = {label: i for i, label in enumerate(kept.index)}
     for split, sub in kept.groupby("split", sort=False):
         rows = picks[sub["combo"].to_numpy()]
-        stakes, prob, odds = stakes_for(rows, opts, str(split))
-        g = growth_metrics(stakes * odds, prob, projection=projection)
+        stakes, prob, odds, corr = stakes_for(rows, opts, str(split))
+        g = growth_metrics(stakes * odds, prob, rho=corr, projection=projection)
         for label, rec in zip(sub.index, g.to_dict("records")):
             i = positions[label]
             out[i] = {
@@ -403,6 +409,15 @@ def _growth_blocks(kept: pd.DataFrame, picks: np.ndarray, opts, *,
                 "k_leverage": _p(rec["k_leverage"]),
                 "breakeven_shift": _p(rec["breakeven_shift"]),
                 "drawdown": {"d": _p(rec["drawdown_d"]), "p": _p(rec["drawdown_p"])},
+                # The stake at every tolerance in the grid, so the page can offer
+                # the risk setting as a choice rather than stating one answer.
+                # The published stake above is this dict's default cell -- every
+                # cell carries the same model-risk haircuts, so the two can never
+                # read differently. `edge_factor` and `var_factor` above are kept
+                # as the audit trail for why a cell reads what it reads; the page
+                # does no arithmetic with them.
+                "drawdown_grid": {k[3:]: _p(v) for k, v in rec.items()
+                                  if isinstance(k, str) and k.startswith("dd_")},
             }
             if not projection:
                 continue
@@ -460,6 +475,11 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         })
 
     kept = scored[scored["undominated"]] if len(scored) else scored
+    # Bound what reaches the page. Usually a no-op; see `portfolio.thin_export`
+    # for the slate shape it is not.
+    if len(kept) > EXPORT_MAX:
+        from ..portfolio import thin_export
+        kept = kept[thin_export(kept)]
     picks_lists = [str(s).split() for s in kept["picks"]] if len(kept) else []
     freq = _selection_frequency(picks_lists, prop_ids)
     for rec in prop_rows:
@@ -477,7 +497,11 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         {
             "id": int(rec["id"]),
             "split": SPLIT_KEYS[rec["split"]],
+            # `legs` is propositions held, `events` is matches backed. They differ
+            # wherever an option is a pair, and conflating them was the bug that
+            # would have turned a leg-count control into a lid on propositions.
             "legs": int(rec["legs"]),
+            "events": int(rec.get("events", rec["legs"])),
             "expected_return_pct": _p(rec["pct_expected_return"]),
             "sd_pct": _p(rec["pct_sd"]),
             "variance": round(float(rec["variance"]), 8),
@@ -488,6 +512,7 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
             "capacity": _p(rec.get("capacity")),
             "capacity_used": _p(rec.get("capacity_used")),
             "max_leg_stake": _p(rec.get("max_leg_stake")),
+            "legs_at_cap": int(rec.get("legs_at_cap") or 0),
             "n_eff": _p(rec.get("n_eff")),
             "median_leg_p": _p(rec.get("median_leg_p")),
             **{k: _p(rec[k]) for k in THRESHOLD_KEYS},
@@ -530,6 +555,8 @@ def portfolios_payload(result: dict, filled: pd.DataFrame | None = None, *,
         # fall within `horizon_rounds` rounds) under `drawdown_p`", shrunk for
         # model risk and capped. Read them and the number stops being magic.
         "risk": {
+            "grid_d": list(GROWTH_DRAWDOWN_GRID_D),
+            "grid_p": list(GROWTH_DRAWDOWN_GRID_P),
             "drawdown_d": GROWTH_DRAWDOWN_D,
             "drawdown_p": GROWTH_DRAWDOWN_P,
             "horizon_rounds": GROWTH_ROUNDS,

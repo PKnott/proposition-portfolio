@@ -175,6 +175,10 @@
     project: null,              // portfolio id being projected
     pot: 1000,
     customF: null,              // the third stake fraction, read off the curve
+    // Which drawdown tolerance the projection is priced at; null is the published
+    // one. The *tolerance* is stored and the stake derived from it, because the
+    // nine stakes are per portfolio -- see `ddStake`.
+    ddKey: null,
     stakeMode: 'suggested',     // which of the two the betting slip prices at
     rounds: 52,
     target: null,
@@ -222,6 +226,7 @@
     if (state.project != null) q.set('p', String(state.project));
     if (state.pot !== 1000) q.set('pot', String(state.pot));
     if (state.customF != null) q.set('cf', String(state.customF));
+    if (state.ddKey) q.set('dd', state.ddKey);
     if (state.stakeMode !== 'suggested') q.set('sm', state.stakeMode);
     if (state.rounds !== 52) q.set('n', String(state.rounds));
     if (state.target != null) q.set('tgt', String(state.target));
@@ -246,6 +251,7 @@
     state.project = null;
     state.pot = 1000;
     state.customF = null;
+    state.ddKey = null;
     state.stakeMode = 'suggested';
     state.rounds = 52;
     state.target = null;
@@ -286,9 +292,15 @@
     if (q.has('p') && portfolioById.has(Number(q.get('p')))) state.project = Number(q.get('p'));
     if (q.has('pot')) state.pot = Number(q.get('pot')) || 1000;
     if (q.has('cf')) state.customF = Number(q.get('cf')) || null;
+    if (DD_CELLS.some(c => c.key === q.get('dd'))) state.ddKey = q.get('dd');
     if (STAKE_MODES.some(m => m.key === q.get('sm'))) state.stakeMode = q.get('sm');
     if (q.has('n')) state.rounds = Number(q.get('n')) || 52;
     if (q.has('tgt')) state.target = Number(q.get('tgt')) || null;
+    // A tolerance in the hash is a tolerance the page is priced at. Written that
+    // way too -- `dd` is only ever emitted alongside the mode that reads it -- but
+    // a link somebody edited by hand must not light a cell in the grid while the
+    // slip quietly prices the published stake.
+    if (state.ddKey) state.stakeMode = 'custom';
     restoring = false;
   }
 
@@ -767,6 +779,42 @@
     bits.push(`max ${pct(RISK.max_leg_stake, 0)} a leg`);
     return bits.join(' · ');
   };
+  /* The nine tolerances the payload prices every portfolio at, and the words for
+     naming them. A cell is the model's own answer under a different appetite, not
+     a number somebody typed, so everything that shows one says what it *is*: a
+     fall, and how often. Payloads written before the grid carry no axes and the
+     panel is simply absent. */
+  const ddKeyOf = (d, p) => `d${String(Math.round(d * 100)).padStart(2, '0')}`
+                          + `_p${String(Math.round(p * 100)).padStart(2, '0')}`;
+  const DD_CELLS = RISK && RISK.grid_d && RISK.grid_p
+    ? RISK.grid_d.flatMap(d => RISK.grid_p.map(p => ({ key: ddKeyOf(d, p), d, p }))) : [];
+  const DD_DEFAULT = RISK ? ddKeyOf(RISK.drawdown_d, RISK.drawdown_p) : null;
+  const HAS_DD_GRID = !!DD_CELLS.length
+    && portfolios.some(pf => pf.growth && pf.growth.drawdown_grid);
+  const ddCell = key => DD_CELLS.find(c => c.key === key) || null;
+  /** What a tolerance is, in words. */
+  const ddSentence = key => {
+    const c = ddCell(key);
+    return c ? `down ${pct(c.d, 0)}, ${pct(c.p, 0)} of the time` : '';
+  };
+  /** The same thing where there is room for seven characters and not forty. */
+  const ddShort = key => {
+    const c = ddCell(key);
+    return c ? `${pct(c.d, 0)} / ${pct(c.p, 0)}` : '';
+  };
+  /** This portfolio's stake at the chosen tolerance.
+   *
+   *  Rounded to the whole percent every other stake on this page is shown, read
+   *  off the curve and priced at -- so the cell, the box, the marker and the slip
+   *  are one number rather than four roundings of it. The grid is per portfolio,
+   *  so this is derived at render rather than stored: the tolerance is what the
+   *  reader chose, and it means a different stake on the next portfolio. */
+  const ddStake = pf => {
+    const cells = state.ddKey && pf && pf.growth && pf.growth.drawdown_grid;
+    const v = cells ? cells[state.ddKey] : null;
+    return v > 0 ? Math.min(0.99, Math.max(0.01, Math.round(v * 100) / 100)) : null;
+  };
+
   const portfolioById = new Map(portfolios.map(pf => [pf.id, pf]));
   const hasProjection = !!AXES && portfolios.some(pf => pf.projection);
 
@@ -790,6 +838,10 @@
     { key: 'custom', label: 'Custom', fk: null, cls: 'r-custom' },
   ];
   const stakeMode = () => STAKE_MODES.find(m => m.key === state.stakeMode) || STAKE_MODES[0];
+  /** A chosen cell is never called Custom. It is the model's answer at a different
+   *  appetite, and telling that apart from a figure somebody typed is the whole
+   *  reason the grid is shipped. */
+  const modeLabel = m => (m.key === 'custom' && state.ddKey) ? ddShort(state.ddKey) : m.label;
   const modeF = pf => {
     const m = stakeMode();
     return m.key === 'custom' ? state.customF : pf[m.fk];
@@ -1059,13 +1111,18 @@
       yfmt: shortMoney,
       xfmt: v => v.toFixed(0),
     }) + `<div class="chart-foot"><div class="keys">${legend}</div>
-      <span class="axis-note">rounds → · pot on a log scale · flat line is the pot you started with</span></div>`;
+      <span class="axis-note">rounds → · pot on a log scale · flat line is the pot you started with${
+        state.ddKey ? ' · drawn at the published stake, the only one the bands were sampled at' : ''
+      }</span></div>`;
   }
 
   function curvePanel(pf, pr) {
     const marks = RATES.filter(r => pf[r.fk] != null)
       .map(r => ({ at: pf[r.fk], cls: r.cls, label: r.label }));
-    if (state.customF != null) marks.push({ at: state.customF, cls: 'r-custom', label: 'yours' });
+    if (state.customF != null) {
+      marks.push({ at: state.customF, cls: 'r-custom',
+                   label: state.ddKey ? ddShort(state.ddKey) : 'yours' });
+    }
     const chart = lineChart({
       x: AXES.f, series: [{ cls: 'r-curve', values: pr.g_curve }], marks, rule: 0,
       yfmt: v => (v * 100).toFixed(1) + '%', xfmt: v => (v * 100).toFixed(0) + '%',
@@ -1078,7 +1135,11 @@
          (${cash(state.pot * f)} a round) grows at <strong>${pct(g, 2)}</strong> per round.
          ${g != null && g < 0 ? '<em>Negative — this stake loses money despite the edge.</em>'
            : f > pf.growth_f_suggested
-             ? `<em>Above the suggested ${pct(pf.growth_f_suggested, 0)} — more growth, and more drawdown than the risk setting allows.</em>`
+             // A tolerance was chosen, so the extra drawdown is the trade the
+             // reader just made rather than a limit they have walked past.
+             ? `<em>Above the published ${pct(pf.growth_f_suggested, 0)} — more growth, and ${
+                  state.ddKey ? `the deeper falls this tolerance allows (${esc(ddSentence(state.ddKey))})`
+                              : 'more drawdown than the risk setting allows'}.</em>`
              : ''}</p>`;
     return chart + `<div class="chart-foot"><span class="axis-note">stake % of pot →
       · growth per round · curve peaks at g*</span></div>${read}
@@ -1091,7 +1152,9 @@
     const target = state.target || null;
     const rows = RATES.map(r => ({ ...r, g: pf[r.gk], band: pr.bands[r.key] }));
     if (state.customF != null) {
-      rows.push({ key: 'custom', label: `yours · ${pct(state.customF, 0)}`, cls: 'r-custom',
+      rows.push({ key: 'custom', cls: 'r-custom',
+                  label: (state.ddKey ? ddShort(state.ddKey) : 'yours')
+                         + ` · ${pct(state.customF, 0)}`,
                   g: gAt(pr, Math.round(state.customF * 100) / 100), band: null });
     }
     const beyond = n > AXES.rounds[AXES.rounds.length - 1];
@@ -1120,6 +1183,43 @@
       that band's edges combined.${beyond ? ' Past round '
         + int(AXES.rounds[AXES.rounds.length - 1]) + ' the band is held flat rather than extrapolated.'
         : ''}</p>`;
+  }
+
+  /** The nine tolerances, and what each one costs in stake.
+   *
+   *  The published setting is one point in a space, and this is the rest of the
+   *  space: 30% at 5% is a taste, not a derivation, and a reader who cannot see
+   *  the neighbours cannot tell a recommendation from a house rule. Stakes only
+   *  -- growth is readable off `g_curve` at whole-percent resolution, and a
+   *  read-off printed beside an exact stake invites a comparison finer than the
+   *  data behind it. Pick a cell and the curve, calculator and slip follow. */
+  function ddPanel(pf) {
+    const cells = pf.growth && pf.growth.drawdown_grid;
+    if (!cells) return `<p class="hint">This portfolio carries no tolerance grid.</p>`;
+    const base = cells[DD_DEFAULT];
+    const body = RISK.grid_d.map(d => `<tr><th>down ${pct(d, 0)}</th>` + RISK.grid_p.map(p => {
+      const key = ddKeyOf(d, p), v = cells[key];
+      const here = state.ddKey ? key === state.ddKey : key === DD_DEFAULT;
+      // Against the published cell, because that is the number the rest of the
+      // page prints and the only one the reader arrived with.
+      const rel = key === DD_DEFAULT ? 'published'
+        : v == null || !(base > 0) ? '' : '\u00d7' + (v / base).toFixed(2);
+      return `<td><button type="button" data-dd="${key}"
+        class="dd-cell${here ? ' on' : ''}${key === DD_DEFAULT ? ' pub' : ''}"
+        title="stake keeps P(down ${pct(d, 0)} in ${int(RISK.horizon_rounds)} rounds) under ${pct(p, 0)}">
+        <span class="f">${v == null ? '\u2014' : pct(v, 0)}</span>
+        <span class="rel">${rel}</span></button></td>`;
+    }).join('') + `</tr>`).join('');
+    const dials = [];
+    if (RISK.pessimism_b) dials.push(`a ${pp(RISK.pessimism_b)}pp pessimism haircut`);
+    if (RISK.slate_tau) dials.push(`slate wobble of ${pp(RISK.slate_tau)}pp`);
+    return `<table class="dd-grid"><thead><tr><th></th>
+        ${RISK.grid_p.map(p => `<th>${pct(p, 0)} of the time</th>`).join('')}
+      </tr></thead><tbody>${body}</tbody></table>
+      <p class="caveat">Each cell is the largest stake whose chance of that fall over
+      ${int(RISK.horizon_rounds)} rounds stays under that probability${dials.length
+        ? ', after ' + dials.join(' and ') : ''} — the model's answer at a different
+      appetite, not a figure you typed. Read at the whole percent the curve is exported at.</p>`;
   }
 
   /** The portfolio as instructions: what to back, where, and for how much.
@@ -1171,15 +1271,33 @@
     // none, and a slip that cannot price its legs should say so rather than
     // announce a confident total of nothing.
     const head = f == null || !accounts.length
-      ? `<p class="hint">${f == null && mode.key === 'custom'
+      ? `<p class="hint">${f == null && mode.key === 'custom' && state.ddKey
+          ? `This portfolio has no stake at ${esc(ddSentence(state.ddKey))}.`
+          : f == null && mode.key === 'custom'
           ? 'Type a stake % above to price this slip.'
           : f == null ? `This portfolio has no ${esc(mode.label.toLowerCase())} stake.`
           : 'This portfolio carries no stake split, so its legs cannot be priced.'}</p>`
-      : `<p class="slip-head"><strong class="${mode.cls}">${esc(mode.label)}</strong> ·
+      : `<p class="slip-head"><strong class="${mode.cls}">${esc(modeLabel(mode))}</strong> ·
+         ${state.ddKey && mode.key === 'custom' ? esc(ddSentence(state.ddKey)) + ' · ' : ''}
          ${pct(f, 0)} of ${cash(state.pot)} · <strong class="cash">${money(total)}</strong>
          across ${accounts.length} ${accounts.length === 1 ? 'account' : 'accounts'}
          ${RUN_CODE ? `<span class="slip-ref" title="what the ledger calls this portfolio"
            >${esc(refOf(pf))}</span>` : ''}</p>`;
+
+    /* The leg cap is a constraint on the split, and where it binds every leg it
+       has replaced the split rather than trimmed it: the stakes below are the
+       cap's, not the growth weights'. Said here because the slip is the only
+       place the stakes are read as instructions. */
+    const capped = pf.legs_at_cap || 0;
+    const capNote = !accounts.length || !capped ? '' : `
+      <p class="caveat cap-note">${capped === pf.legs
+        ? `Every leg is pinned to the leg cap, so the stakes above are the cap's
+           rather than the growth split's.`
+        : `${capped} of ${pf.legs} legs ${capped === 1 ? 'is' : 'are'} pinned to the
+           leg cap; the rest are placed by the growth split.`}
+        ${pf.capacity_used != null
+          ? ` It costs ${pct(1 - pf.capacity_used, 1)} of this selection's capacity.`
+          : ''}</p>`;
 
     const acct = !accounts.length ? '' : `
       <div class="slip-sub">What to have where</div>
@@ -1193,7 +1311,7 @@
 
     return head + `<table class="slip"><thead><tr>
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
-      </tr></thead><tbody>${rows}</tbody></table>${acct}
+      </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
       <p class="caveat">Books are picked to open the <strong>fewest accounts</strong>, never to
       give up a price: a leg quoted the same at two books goes to whichever one the rest of the
       slip already needs. Legs are rounded to the penny before anything is added up, so every
@@ -1251,6 +1369,13 @@
     // whether or not one of them has focus.
     for (const b of el('stake-mode').children) {
       b.classList.toggle('on', b.dataset.mode === state.stakeMode);
+      // The second button is whatever the reader last asked for: a typed figure
+      // is Custom, a grid cell is the tolerance it came from, and calling the
+      // second one Custom would lose exactly the distinction the grid draws.
+      if (b.dataset.mode !== 'custom') continue;
+      const m = STAKE_MODES.find(x => x.key === 'custom');
+      b.textContent = modeLabel(m);
+      if (state.ddKey) b.title = ddSentence(state.ddKey); else b.removeAttribute('title');
     }
   }
 
@@ -1273,6 +1398,12 @@
     el('proj-id').innerHTML = `<strong>portfolio ${esc(refOf(pf))}</strong> ·
       ${esc(BOOK.splits[pf.split])} · ${pf.legs} legs · return ${pct(pf.expected_return_pct)}
       · sd ${pct(pf.sd_pct)}`;
+    // The tolerance is what the reader chose; the stake is this portfolio's
+    // answer to it. Derived here rather than at the click because the grid is per
+    // portfolio -- the same appetite is a different number on the next one.
+    if (state.ddKey) state.customF = ddStake(pf);
+    el('proj-dd-panel').hidden = !HAS_DD_GRID;
+    if (HAS_DD_GRID) el('proj-dd').innerHTML = ddPanel(pf);
     el('proj-fan').innerHTML = fanPanel(pf, pr);
     el('proj-curve').innerHTML = curvePanel(pf, pr);
     el('proj-calc').innerHTML = calcPanel(pf, pr);
@@ -1491,14 +1622,36 @@
     state.pot = Math.max(0, Number(e.target.value) || 0);
     projChanged();
   });
+  /* Picking a cell chooses a *tolerance*, not a number: `renderProjection` reads
+     the stake out of the portfolio in front of the reader. The published cell goes
+     back to the published stake rather than re-entering the same figure as a
+     custom one, so there stays one source for the number the rest of the page
+     prints. */
+  el('proj-dd').addEventListener('click', e => {
+    const b = e.target.closest('button[data-dd]');
+    if (!b) return;
+    if (b.dataset.dd === DD_DEFAULT) {
+      if (state.ddKey) state.customF = null;   // a cell's stake, not one they typed
+      state.ddKey = null;
+      state.stakeMode = 'suggested';
+    } else {
+      state.ddKey = b.dataset.dd;
+      state.stakeMode = 'custom';
+    }
+    projChanged();
+  });
+  // Typing a stake makes it a typed stake. Whatever tolerance it came from, it is
+  // the reader's number now, and must stop claiming to be the model's.
   el('in-f').addEventListener('input', e => {
     const v = Number(e.target.value);
     state.customF = v >= 1 && v <= 99 ? Math.round(v) / 100 : null;
+    state.ddKey = null;
     projChanged();
   });
   el('in-g').addEventListener('input', e => {
     const pf = portfolioById.get(state.project);
     const raw = e.target.value;
+    state.ddKey = null;
     if (raw === '' || !pf || !pf.projection) { state.customF = null; projChanged(); return; }
     const f = fAt(pf.projection, Number(raw) / 100);
     // Rounded onto the exported grid, so the stake shown is one the curve was
@@ -1519,6 +1672,13 @@
     const b = e.target.closest('button[data-mode]');
     if (!b) return;
     state.stakeMode = b.dataset.mode;
+    // Back to the published stake means back to the published tolerance: leaving
+    // a cell selected would light it in the grid while the slip priced something
+    // else.
+    if (state.stakeMode !== 'custom' && state.ddKey) {
+      state.ddKey = null;
+      state.customF = null;
+    }
     // Custom with nothing in it is a blank panel. Seeding from the suggested
     // stake gives the first click something to show and then move.
     if (state.stakeMode === 'custom' && state.customF == null) {
@@ -1535,6 +1695,7 @@
   el('in-slip-f').addEventListener('input', e => {
     const v = Number(e.target.value);
     state.customF = v >= 1 && v <= 99 ? Math.round(v) / 100 : null;
+    state.ddKey = null;
     state.stakeMode = 'custom';
     projChanged();
   });

@@ -40,7 +40,9 @@ import pandas as pd
 from .config import LEAGUES, canonical_team
 from .paths import ANALYSIS, ANALYSIS_PENDING, ESPN_MATCH_STATS
 from .spec import STATS
-from .staking import BOOK_COLUMNS, add_edge, best_price
+# `parse_label` moved next to `proposition_label`, which it is the inverse of.
+# Re-exported here because every caller and every test knows it by this name.
+from .staking import BOOK_COLUMNS, add_edge, best_price, parse_label
 
 # --- the store ------------------------------------------------------------
 
@@ -97,25 +99,6 @@ def write_table(df: pd.DataFrame, name: str, root: Path | None = None) -> Path:
 
 
 # --- keys -----------------------------------------------------------------
-
-
-def parse_label(label: str) -> tuple[str, str, float]:
-    """``"Corners - Parma - Over 1.5"`` -> ``("corners", "Parma", 1.5)``.
-
-    Split from the right on `" - Over "` and only then on the first `" - "`: a
-    club whose name contains a hyphen-space is a real possibility, and none of
-    the four display names does.
-    """
-    m = _LABEL.match(str(label).strip())
-    if not m:
-        raise ValueError(f"cannot parse proposition label {label!r}")
-    head, line = m.group("head"), float(m.group("line"))
-    display, _, team = head.partition(" - ")
-    if not team:
-        raise ValueError(f"cannot parse proposition label {label!r}")
-    if display not in _TARGET_BY_DISPLAY:
-        raise ValueError(f"unknown market {display!r} in {label!r}")
-    return _TARGET_BY_DISPLAY[display], team, line
 
 
 def league_of(sheet_code: str) -> str:

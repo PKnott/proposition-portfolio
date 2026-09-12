@@ -359,6 +359,27 @@ GROWTH_DRAWDOWN_P = 0.05
 GROWTH_PATHS = 4_000
 GROWTH_ROUNDS = 100
 
+# The tolerances the Edge Book offers as a selector, beside the one above that
+# sets the published stake.
+#
+# `GROWTH_DRAWDOWN_D`/`_P` are a taste, not a derivation: 30% at 5% is one point
+# in this space, and it is the point that makes the published stake one-ninth
+# Kelly. Shipping the neighbours is how that choice becomes visible rather than
+# buried -- a reader who can see that 50%-at-25% would double the stake can tell
+# a recommendation from a house rule.
+#
+# Nine cells cost about a third more than the one they surround, not nine times:
+# a path's worst fall is a single number, so every drawdown level is a tail count
+# of one array and every probability a quantile of it. See `growth.max_drawdowns`.
+GROWTH_DRAWDOWN_GRID_D: tuple[float, ...] = (0.10, 0.30, 0.50)
+GROWTH_DRAWDOWN_GRID_P: tuple[float, ...] = (0.05, 0.10, 0.25)
+
+# Points in the shared `f` sweep the grid reads its crossings off. Coarse on
+# purpose -- each crossing is then bisected inside the interval the sweep
+# bracketed it in, which costs six more passes and lands far finer than 24
+# points alone would.
+GROWTH_DRAWDOWN_GRID_POINTS = 24
+
 # --- Projection block (`growth.growth_metrics(projection=True)`) ----------
 #
 # What the Edge Book's Projection page draws. Percentiles rather than a literal
@@ -427,6 +448,23 @@ SLATE_TAU = 0.0
 # capacity and is reported as `capacity_used` so the cost is visible.
 MAX_LEG_STAKE = 0.15
 
+# How much room the cap leaves a short portfolio, as a multiple of equal weight.
+#
+# `MAX_LEG_STAKE` is unreachable below seven legs -- six legs cannot each hold
+# under 15% -- so `cap_stakes` relaxes it per row. Relaxing to exactly `1 / n`
+# is feasible and *uniquely* feasible: with six legs capped at a sixth, the only
+# allocation summing to one is six equal stakes, and the growth split is erased
+# rather than constrained. Measured on the 12 Sept slate, a three-fixture card
+# whose largest portfolio is six legs, that flattened all 194 exported
+# portfolios to equal stakes and cost 13% of capacity on the top row.
+#
+# At 2.0 the floor is twice equal weight, so a short row keeps the ordering the
+# growth weights give it while still refusing to put a third of the stake on one
+# proposition. Below `n = CAP_RELIEF` the cap cannot bind at all and the row is
+# effectively uncapped, which is the honest answer for two legs: there is no
+# diversification left to protect.
+CAP_RELIEF = 2.0
+
 # --- Paired propositions (`portfolio.event_options`) ----------------------
 #
 # Whether a portfolio may take two propositions from one match, and how many
@@ -445,6 +483,16 @@ MAX_LEG_STAKE = 0.15
 # `portfolio.EXHAUSTIVE_MAX`, so small midweek slates still enumerate provably.
 PAIRS_ENABLED = True
 PAIR_KEEP = 8
+
+# Ceiling on how many undominated portfolios are exported to the Edge Book.
+#
+# Inert on a normal slate -- 2,360 cleared the frontier on 11 Sept -- and there
+# for the shape that is not normal. A 37-event card at `leg_var = 2` put 12% of
+# its pool on the frontier, because portfolios differing by one dropped event
+# have return and variance correlated at 0.83 and so almost never dominate each
+# other. That run wrote 35 MB and no page could be built from it; 9.4 MB is the
+# largest that ever worked.
+EXPORT_MAX = 2_500
 
 # Correlation of two propositions in the same match, by what they share.
 #
@@ -698,11 +746,16 @@ __all__ = [
     "GROWTH_DRAWDOWN_P",
     "GROWTH_PATHS",
     "GROWTH_ROUNDS",
+    "GROWTH_DRAWDOWN_GRID_D",
+    "GROWTH_DRAWDOWN_GRID_P",
+    "GROWTH_DRAWDOWN_GRID_POINTS",
     "PESSIMISM_B",
     "SLATE_TAU",
     "MAX_LEG_STAKE",
+    "CAP_RELIEF",
     "PAIRS_ENABLED",
     "PAIR_KEEP",
+    "EXPORT_MAX",
     "PAIR_CORRELATION",
     "L_GRID",
     "ALPHA_GRID",
