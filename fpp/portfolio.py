@@ -21,19 +21,22 @@ which of them is worth the most.
 
 The rules
 ---------
-* At most one proposition per event. Two propositions from the same match -- a
-  team's goals line and its own corners line -- are strongly correlated, and
-  every variance and threshold figure here assumes independence. The rule and
-  the assumption stand or fall together.
+* At most two propositions per event, and a pair is priced with its correlation.
+  Each event offers every qualifying proposition on its own plus, with
+  `PAIRS_ENABLED`, up to `PAIR_KEEP` two-proposition combinations (see
+  `event_options`). Two propositions from the same match are correlated, so a
+  pair's correlation comes from `pair_rho`, its joint outcome from `joint_both`
+  (clamped to the Frechet bounds), and its covariance term enters the variance.
+  Different events are treated as independent.
 
-  Measured since, over 1,438 same-match pairs: +0.455 for the same team's same
-  stat, +0.267 for its different stat, and **-0.185 for opposite teams**, against
-  a -0.013 placebo across matches. So the correlation is real but far from
-  duplication, and a hedged cross-team pair is worth more than an unrelated leg.
-  Relaxing this rule is worth ~1.3x capacity and needs the joint distribution
-  priced properly, not assumed away -- it is not done here yet.
+  The correlations were measured over 1,438 same-match pairs from the first two
+  settled slates, an early sample to be re-estimated as more slates settle:
+  +0.455 for the same team's same stat, +0.267 for its different stat, and
+  **-0.185 for opposite teams**, against a -0.013 placebo across matches. So the
+  correlation is real but far from duplication, and a hedged cross-team pair is
+  worth more than an unrelated leg -- about 1.3x capacity over one per event.
 * Events may be skipped. A portfolio is any non-empty selection of events with
-  one proposition chosen from each.
+  one option -- a single proposition or a priced pair -- chosen from each.
 * Only propositions with ``e >= 1`` are eligible, and within an event only those
   on the ``(p, o)`` frontier (see `staking.undominated`).
 

@@ -34,13 +34,14 @@ ordering propositions against each other is the wrong question, and
 
 Independence
 ------------
-The outcome distribution treats propositions as independent. That is safe *by
-construction* rather than by assumption: a portfolio admits at most one
-proposition per match, and two propositions from different matches are genuinely
-unrelated. If that one-per-match rule is ever relaxed, same-match propositions
-(a team's goals line and its own corners line) are strongly correlated and the
-variance and threshold figures here would understate the real spread. The rule
-and the assumption stand or fall together, so they are documented together.
+The primitives here treat propositions as independent, which is right for
+propositions from different matches. It is not right for two from the same match
+-- a team's goals line and its own corners line are correlated -- so these
+functions must not be used to score a portfolio that holds a same-match pair: the
+variance and threshold figures would misstate the real spread. `fpp.portfolio`
+allows up to two propositions per match and prices that correlation itself, with
+the pair's covariance in the variance and a correlated joint in the return
+distribution (`portfolio.pair_terms`, `portfolio.joint_both`).
 """
 
 from __future__ import annotations

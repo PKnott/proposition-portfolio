@@ -1,5 +1,12 @@
 # Edge capacity: what portfolio size actually does
 
+> **Early study, small sample.** This was run after the first two settled slates
+> (29 and 30 August 2026). The algebraic results (the Sharpe identity and the
+> scaling laws) do not depend on the sample. The measured figures (correlations,
+> the Kelly fraction, growth comparisons) are early measurements, not established
+> findings. The study will be repeated once more slates have settled; the
+> international break has delayed that.
+
 A study of how the number of legs in a portfolio drives variance, the stake it can
 carry, and long-run growth. It rebuilt the staking model and retired two of the
 three numbers the project used to publish.
