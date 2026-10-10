@@ -29,11 +29,11 @@ simulation → out-of-sample attribution**
 | **Validation discipline** | Expanding-window walk-forward CV by season, record-before-update features, a withheld tuning season, and a test season scored exactly once |
 | **Statistical testing** | Paired bootstrap CIs and Wilcoxon tests, with an edge counted only when both agree. Calibration is graded by ECE, Brier with its Murphy decomposition, calibration slope and Wilson bands |
 | **Market pricing** | Model probabilities compared with real-world decimal odds. Edge is measured per proposition, and (probability, price) dominance is applied within each event |
-| **Portfolio optimisation** | A three-objective frontier (expected return, variance, P(profit)) over up to ~10¹¹ candidate portfolios, found by a dynamic programme over a Minkowski sum |
+| **Portfolio optimisation** | A three-objective frontier (expected return, variance, P(profit)) over up to ~10²³ candidate portfolios, found by a dynamic programme over a Minkowski sum |
 | **Correlation modelling** | Positions in the same match are priced with a correlated joint distribution, clamped to Fréchet bounds |
 | **Risk and sizing** | Edge-aware, Sharpe-optimal leg weights, a drawdown-constrained fraction of Kelly, and explicit model-risk haircuts |
 | **Simulation** | 4,000-path × 100-round Monte Carlo for drawdown risk, and p5/p50/p95 wealth fans for compounding |
-| **Engineering** | A typed Python package with 453 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
+| **Engineering** | A typed Python package with 515 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
 
 ---
 
@@ -170,13 +170,12 @@ real week, the highest expected return was a single position with a 141%
 standard deviation, the lowest spread was a 26-leg portfolio at 9.9%, and the
 highest P(profit), 95%, was neither of them.
 
-When events may be skipped, a real slate offers **2.7 × 10¹¹** portfolios, far
-too many to enumerate. Every quantity a portfolio is judged on is a sum over its
-legs, so the reachable space is a Minkowski sum, and a dynamic programme can walk
-it event by event. Below 2 × 10⁶ combinations the code enumerates exactly and
+When events may be skipped and a match may hold two positions, a real slate
+offers **10²² to 10²³** portfolios, far too many to enumerate. Every quantity a
+portfolio is judged on is a sum over its legs, so the reachable space is a
+Minkowski sum, and a dynamic programme can walk it event by event. Below 2 × 10⁶ combinations the code enumerates exactly and
 records which claim it is making. Against full enumeration on a 26-event slate,
-the search found 87 of the 90 frontier portfolios, and each miss was within
-7.4e-5 of one it did find.
+the search found all 90 frontier portfolios exactly.
 
 Two positions from the same match enter with a correlation graded by what they
 share. The joint `P(both)` is clamped to the Fréchet bounds, so an impossible
@@ -304,7 +303,7 @@ Notebooks/                  00 – 06 drivers
 app/edge-book/              Edge Book front end (HTML, CSS, JS)
 artifacts/<target>/<ver>/   frozen window, features, params, CV and provenance
 docs/                       studies
-tests/                      453 regression tests
+tests/                      515 regression tests
 ```
 
 ## Reproducibility
@@ -362,7 +361,9 @@ it freezes `artifacts/` for all four targets.
 2. Real-world market odds for each proposition are captured into the odds form.
 3. `06_Split` reads the filled form and nothing else. It finds the qualifying
    propositions, searches the portfolio frontier, sizes each portfolio, and writes
-   `edge_book_<date>.html`.
+   `edge_book_<date>.html`. Expect about 30–35 minutes on a full weekend slate.
+   Most of that goes on the drawdown simulation run for each exported portfolio,
+   not on the search.
 
 `06_Split` has one main search control, `LEG_VAR`: how many qualifying events a
 portfolio may leave out. At zero the space is small enough to enumerate exactly.
