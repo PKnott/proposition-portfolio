@@ -660,8 +660,13 @@
 
   function firstVisible(scrollTop) {
     const openIdx = state.open == null ? -1 : visible.findIndex(p => p.id === state.open);
-    if (openIdx < 0 || scrollTop <= (openIdx + 1) * ROW_H) return Math.floor(scrollTop / ROW_H);
-    return Math.floor(Math.max(0, scrollTop - expandedH) / ROW_H);
+    const panelTop = (openIdx + 1) * ROW_H;
+    if (openIdx < 0 || scrollTop <= panelTop) return Math.floor(scrollTop / ROW_H);
+    // Inside the legs panel the open row is the one on screen. Subtracting the
+    // whole panel here instead landed rows *above* it, so a tall panel scrolled
+    // into view rendered nothing at all.
+    if (scrollTop < panelTop + expandedH) return openIdx;
+    return Math.floor((scrollTop - expandedH) / ROW_H);
   }
 
   function legsPanel(pf) {
