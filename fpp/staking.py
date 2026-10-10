@@ -100,10 +100,25 @@ THRESHOLDS = (0.90, 1.00, 1.10)
 # definition: the form writes these headers, the form reader parses them back, and
 # `best_price` reports which of them won. Adding a book is a line here.
 #
-# Betfair was dropped after a coverage check: the "Betfair" column on the odds
-# comparison this is filled from is the *Exchange*, which priced 3 of 122 sampled
-# propositions and none of the team shot, shot-on-target or corner markets this
-# model actually asks about.
+# Virgin Bet was dropped on 2026-09-13. Its feed on the comparison page this is
+# filled from had been frozen since 1 September -- every `VE` price on a match
+# carried one identical timestamp eleven days stale, while the live books
+# re-quoted hourly -- and the site had already removed it from its own bookmaker
+# catalogue, so nothing a visitor sees was ever showing those prices. Stale
+# prices are worse than absent ones here: `best_price` takes the row max, so a
+# frozen quote wins rows it should not and invents the edge on them. On the
+# 2026-09-12 slate it was the sole best price on 23 of 762 priced rows, leading
+# by a median of 5% and by as much as 20%.
+#
+# Betfair Exchange took that column for half a day and came back out, on
+# commission rather than on coverage. The exchange quotes a *back* price and
+# takes its cut out of net winnings, so a 5.50 on the page is about 5.41 at a
+# 2% rate -- while `best_price` compares it gross against sportsbook prices that
+# need no such adjustment. That flatters every row the exchange wins, which is
+# the same fault Virgin Bet was removed for, only smaller and in a direction the
+# form cannot see. The column is worth having once the haircut is applied in
+# `best_price` and not before; the argument for it is unchanged and good --
+# an exchange does not restrict or close a winning account.
 #
 # The order here is the column order on the form, and the keys are the column
 # names the whole pipeline uses. Nothing downstream of `best_price` sees a book
@@ -114,7 +129,6 @@ BOOKS: dict[str, str] = {
     "tenbet": "10bet",
     "boylesports": "BoyleSports",
     "betmgm": "BetMGM",
-    "virginbet": "Virgin Bet",
 }
 BOOK_COLUMNS: tuple[str, ...] = tuple(BOOKS)
 

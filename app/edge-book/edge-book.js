@@ -660,8 +660,13 @@
 
   function firstVisible(scrollTop) {
     const openIdx = state.open == null ? -1 : visible.findIndex(p => p.id === state.open);
-    if (openIdx < 0 || scrollTop <= (openIdx + 1) * ROW_H) return Math.floor(scrollTop / ROW_H);
-    return Math.floor(Math.max(0, scrollTop - expandedH) / ROW_H);
+    const panelTop = (openIdx + 1) * ROW_H;
+    if (openIdx < 0 || scrollTop <= panelTop) return Math.floor(scrollTop / ROW_H);
+    // Inside the legs panel the open row is the one on screen. Subtracting the
+    // whole panel here instead landed rows *above* it, so a tall panel scrolled
+    // into view rendered nothing at all.
+    if (scrollTop < panelTop + expandedH) return openIdx;
+    return Math.floor((scrollTop - expandedH) / ROW_H);
   }
 
   function legsPanel(pf) {
@@ -849,8 +854,14 @@
 
   /* House order, consulted only to settle a tie the minimum has already left
      open. The spellings are the display names `staking.BOOKS` writes into the
-     payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'. */
-  const BOOK_ORDER = ['10bet', 'BoyleSports', 'BetMGM', 'Virgin Bet', 'Paddy Power', 'Bet365'];
+     payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'.
+
+     There was briefly an exchange at the head of this list that outranked the
+     fewest-accounts rule outright. If one returns to `staking.BOOKS` that
+     preference is the right shape -- an exchange does not restrict a winning
+     account -- but it belongs on a price that has had commission taken out of
+     it, which is why the column came back off. */
+  const BOOK_ORDER = ['10bet', 'BoyleSports', 'BetMGM', 'Paddy Power', 'Bet365'];
   const bookRank = b => { const i = BOOK_ORDER.indexOf(b); return i < 0 ? BOOK_ORDER.length : i; };
   /** Rank first, then name, so a book nobody listed still sorts the same way twice. */
   const byBook = (a, b) => bookRank(a) - bookRank(b) || (a < b ? -1 : a > b ? 1 : 0);
@@ -864,8 +875,8 @@
   /** One bookmaker per leg, chosen to open the fewest accounts.
    *
    *  `staking.best_price` names *every* book that matched the top price rather
-   *  than picking one, so a leg reading 'BetMGM / Virgin Bet' is a free choice
-   *  and this is where it gets made. Minimum accounts decides first and
+   *  than picking one, so a leg reading 'BetMGM / Bet365' is a free choice and
+   *  this is where it gets made. Minimum accounts decides first and
    *  `BOOK_ORDER` only breaks what is left -- a preference that cost an extra
    *  account would be the preference deciding, which is not what it is for.
    *
@@ -877,9 +888,9 @@
   function chooseBooks(legs) {
     const cands = legs.map(({ prop }) => !prop || !prop.book ? []
       : String(prop.book).split('/').map(t => t.trim()).filter(Boolean));
-    const need = cands.map((c, i) => [i, c]).filter(([, c]) => c.length);
-    const universe = [...new Set(cands.flat())].sort(byBook);
     const out = new Map();
+    const need = cands.map((c, i) => [i, c]).filter(([, c]) => c.length);
+    const universe = [...new Set(need.flatMap(([, c]) => c))].sort(byBook);
     if (!need.length) return out;
 
     const covers = (set, c) => c.some(b => set.includes(b));
@@ -1243,15 +1254,36 @@
     const p2 = v => Math.round(v * 100) / 100;
     const cashOf = st => (st == null || f == null ? null : p2(st * f * state.pot));
 
-    const rows = legs.map(({ prop, stake }, k) => {
-      if (!prop) return '';
-      const b = books.get(k), c = cashOf(stake);
-      return `<tr>
-        <td class="sel"><span class="fx">${esc(prop.fixture || prop.event)}</span>
-          ${esc(prop.proposition)}</td>
-        <td>${num(prop.e, 4)}</td>
-        <td>${num(prop.odds)}</td>
-        <td class="bk">${b ? esc(b) : '—'}</td>
+    /* Ordered the way it is placed: one account at a time, and inside an
+       account one match at a time. The old order was the portfolio's own --
+       whatever order the search happened to pick the legs in -- which reads
+       fine as a list and is miserable at the counter, because it sends you
+       back to a book you have already left. Blocks come in `BOOK_ORDER`, so the
+       slip is filled in the same order every day. */
+    const placed = legs.map(({ prop, stake }, k) => ({
+      prop, stake, k,
+      book: books.get(k) || null,
+      fx: prop ? String(prop.fixture || prop.event || '') : '',
+    })).filter(r => r.prop);
+    placed.sort((a, b) =>
+      byBook(a.book || '\uffff', b.book || '\uffff')
+      || (a.fx < b.fx ? -1 : a.fx > b.fx ? 1 : 0)
+      || a.k - b.k);
+
+    /* A book's name is printed once, on the row that opens its block, and the
+       rows under it are indented rather than repeating it. The blank book cell
+       is the grouping: seeing the name again would say a second account. */
+    const rows = placed.map((r, i) => {
+      const opens = i === 0 || placed[i - 1].book !== r.book;
+      const newFx = opens || placed[i - 1].fx !== r.fx;
+      const c = cashOf(r.stake);
+      return `<tr class="${opens ? 'bk-open' : ''}">
+        <td class="sel">${newFx
+          ? `<span class="fx">${esc(r.fx)}</span>` : ''}
+          ${esc(r.prop.proposition)}</td>
+        <td>${num(r.prop.e, 4)}</td>
+        <td>${num(r.prop.odds)}</td>
+        <td class="bk">${opens ? (r.book ? esc(r.book) : '—') : ''}</td>
         <td class="cash">${c == null ? '—' : money(c)}</td>
       </tr>`;
     }).join('');
@@ -1312,10 +1344,11 @@
     return head + `<table class="slip"><thead><tr>
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
       </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
-      <p class="caveat">Books are picked to open the <strong>fewest accounts</strong>, never to
-      give up a price: a leg quoted the same at two books goes to whichever one the rest of the
-      slip already needs. Legs are rounded to the penny before anything is added up, so every
-      total is the sum of the rows above it.</p>`;
+      <p class="caveat">Grouped by account, then by match, in the order it is placed.
+      Books are picked to open the <strong>fewest accounts</strong>, never to give up a price:
+      a leg quoted the same at two books goes to whichever one the slip already needs. Legs are
+      rounded to the penny before anything is added up, so every total is the sum of the rows
+      above it.</p>`;
   }
 
   function histPanel(pr) {
