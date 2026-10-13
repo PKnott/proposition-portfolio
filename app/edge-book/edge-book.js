@@ -1214,7 +1214,7 @@
       // Against the published cell, because that is the number the rest of the
       // page prints and the only one the reader arrived with.
       const rel = key === DD_DEFAULT ? 'published'
-        : v == null || !(base > 0) ? '' : '\u00d7' + (v / base).toFixed(2);
+        : v == null || !(base > 0) ? '' : (v / base).toFixed(2) + '\u00d7 the stake';
       return `<td><button type="button" data-dd="${key}"
         class="dd-cell${here ? ' on' : ''}${key === DD_DEFAULT ? ' pub' : ''}"
         title="stake keeps P(down ${pct(d, 0)} in ${int(RISK.horizon_rounds)} rounds) under ${pct(p, 0)}">
@@ -1354,9 +1354,16 @@
   function histPanel(pr) {
     const bars = pr.hist, max = Math.max(...bars);
     if (!(max > 0)) return '';
+    // The bars stay a pmf, but the hover reads as "at least this much": the
+    // same direction as P(profit) and the P(>x%) stats, so the bar starting at
+    // 1x reads off P(profit) itself. Bin k spans [k*step, (k+1)*step), so the
+    // mass from k rightwards is P(return >= its lower edge). Summed from the
+    // right rather than as 1 - prefix, so the far tail is not rounding noise.
+    const atLeast = new Array(bars.length);
+    for (let i = bars.length - 1, s = 0; i >= 0; i--) atLeast[i] = s += bars[i];
     return `<div class="hist">${bars.map((m, i) => `
       <i style="height:${(m / max * 100).toFixed(1)}%"
-         title="return ${((i + 0.5) * pr.hist_step).toFixed(2)}× — ${pct(m, 2)}"></i>`).join('')}</div>
+         title="≥ ×${(i * pr.hist_step).toFixed(2)} — ${pct(Math.min(atLeast[i], 1), 1)}"></i>`).join('')}</div>
       <div class="hist-ax"><span>0</span><span>one round's return, ×stake</span>
       <span>${num(pr.max_return)}×</span></div>`;
   }
