@@ -40,3 +40,13 @@ EURO_CACHE = EURO_INPUTS / "scoreboard_cache"
 EURO_MATCH_STATS = EURO_INPUTS / "euro_match_stats.csv"
 EURO_ARTIFACTS = ARTIFACTS / "euro"
 EURO_OUTPUTS = OUTPUTS / "Euro"
+EURO_DATA = EURO_OUTPUTS / "Data"            # JSON payloads; `_write_json` prunes per folder
+EURO_ANALYSIS = EURO_OUTPUTS / "Analysis"    # the European ledger store, apart from the league one
+
+# --- Production settings ------------------------------------------------------
+#
+# Frozen after the 2025/26 holdout was scored (artifacts/euro/holdout_scored.json).
+# Alpha is the ridge strength of the European layer, chosen by walk-forward over
+# 2017/18-2024/25. `None` means the league model at par alone: on corners the
+# layer did not beat it significantly in walk-forward, so it is not used.
+PRODUCTION: dict[str, float | None] = {"goals": 0.3, "shots": 0.2, "sot": 0.2, "corners": None}

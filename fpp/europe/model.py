@@ -219,6 +219,28 @@ def feature_rows(rows: pd.DataFrame, priors: pd.DataFrame, selected: list[str],
     return X[selected].astype(float)
 
 
+def feature_matrix(rows: pd.DataFrame, table: pd.DataFrame, clean: pd.DataFrame,
+                   ctx: RunContext, target: str, rates: dict | None = None,
+                   bw: BufferWindows | None = None) -> pd.DataFrame:
+    """One target's league-model features for European rows, read off ``table``.
+
+    ``table`` is the domestic team-match table the buffers run over: the clean
+    table for history, or the clean table with unplayed league fixtures appended
+    (`predict.append_fixtures_as_rows`) for live fixtures -- which is what gives a
+    club a "next domestic row" after its last played match. ``clean`` supplies the
+    promoted flags and the league rates, which only ever need played matches.
+    """
+    w, feats = ctx.windows[target], ctx.features[target]
+    bw = bw or BufferWindows(table, L_max=max(50, int(w["L"])))
+    need = lookup_features(feats)
+    look = build_feature_table(table, bw, int(w["L"]), float(w["alpha"]),
+                               features=need, drop_warmup=False)
+    dom = pd.concat([look.meta[["team", "date", "is_home"]], look.X[need]], axis=1)
+    dom["date"] = pd.to_datetime(dom["date"])
+    rates = rates if rates is not None else league_rates(clean)
+    return feature_rows(rows, asof_priors(rows, dom, need), feats, rates, clean)
+
+
 # --- Offsets ------------------------------------------------------------------
 
 def offsets(stats: pd.DataFrame, clean: pd.DataFrame, ctx: RunContext | None = None,
@@ -246,12 +268,7 @@ def offsets(stats: pd.DataFrame, clean: pd.DataFrame, ctx: RunContext | None = N
 
         w, feats = ctx.windows[t], ctx.features[t]
         bw = BufferWindows(clean, L_max=max(50, int(w["L"])))
-        need = lookup_features(feats)
-        look = build_feature_table(clean, bw, int(w["L"]), float(w["alpha"]),
-                                   features=need, drop_warmup=False)
-        dom = pd.concat([look.meta[["team", "date", "is_home"]], look.X[need]], axis=1)
-        dom["date"] = pd.to_datetime(dom["date"])
-        X = feature_rows(rows, asof_priors(rows, dom, need), feats, rates, clean)
+        X = feature_matrix(rows, clean, clean, ctx, t, rates, bw)
 
         train = build_feature_table(clean, bw, int(w["L"]), float(w["alpha"]), features=feats)
         m = scorable_mask(train, t)
@@ -288,5 +305,5 @@ def offsets(stats: pd.DataFrame, clean: pd.DataFrame, ctx: RunContext | None = N
     return out
 
 
-__all__ = ["COUNTS", "MAX_LOOKAHEAD", "membership", "team_rows", "lookup_features", "asof_priors",
+__all__ = ["COUNTS", "MAX_LOOKAHEAD", "membership", "team_rows", "lookup_features", "asof_priors", "feature_matrix",
            "league_rates", "par_ratio", "feature_rows", "offsets"]

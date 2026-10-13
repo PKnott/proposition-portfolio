@@ -89,7 +89,9 @@ def sheet_codes(preds: pd.DataFrame) -> list[str]:
     counts: dict[str, int] = {}
     codes = []
     for lk in preds["league_key"]:
-        prefix = LEAGUES[lk].prefix
+        # A key outside the five leagues -- a European competition, `fpp.europe`
+        # -- is its own prefix (`UCL-01`). The five leagues are unchanged.
+        prefix = LEAGUES[lk].prefix if lk in LEAGUES else str(lk)
         counts[prefix] = counts.get(prefix, 0) + 1
         codes.append(f"{prefix}-{counts[prefix]:02d}")
     return codes

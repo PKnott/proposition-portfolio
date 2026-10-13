@@ -52,6 +52,11 @@ TABLES: tuple[str, ...] = ("runs", "propositions", "portfolios", "legs", "placed
 # `LEAGUES[...].prefix`, so inverting that dict is the only definition needed.
 _KEY_BY_PREFIX: dict[str, str] = {lg.prefix: key for key, lg in LEAGUES.items()}
 
+# European competitions (`fpp.europe`), whose sheet codes carry the key itself as
+# the prefix (`UCL-01`). Listed by value rather than imported, so the ledger does
+# not depend on that package; `tests/test_europe.py` pins this to its registry.
+_NON_DOMESTIC_KEYS: frozenset[str] = frozenset({"UCL", "UEL", "UECL"})
+
 # Proposition display name -> target key, e.g. "Shots on Target" -> "sot". The
 # labels are built by `staking.proposition_label` from `StatSpec.display`, so
 # this inverts one registry rather than restating it.
@@ -104,6 +109,8 @@ def write_table(df: pd.DataFrame, name: str, root: Path | None = None) -> Path:
 def league_of(sheet_code: str) -> str:
     """``"D1-05"`` -> ``"Bund"``. Within-run positional codes still name a league."""
     prefix = str(sheet_code).split("-")[0]
+    if prefix in _NON_DOMESTIC_KEYS:
+        return prefix
     if prefix not in _KEY_BY_PREFIX:
         raise ValueError(f"unknown league prefix {prefix!r} in sheet code {sheet_code!r}")
     return _KEY_BY_PREFIX[prefix]

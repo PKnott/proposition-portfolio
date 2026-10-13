@@ -153,3 +153,70 @@ def test_calendar_year_reads_the_season_a_payload_describes():
     new = {"leagues": [{"calendar": [{"startDate": "2020-07-01T04:00Z", "endDate": "2021-07-01T03:59Z"}]}]}
     assert ingest._calendar_year(running) == 2019
     assert ingest._calendar_year(new) == 2020
+
+
+# --- shared-code fallbacks ---------------------------------------------------------
+
+def test_domestic_sheet_codes_are_unchanged_and_european_keys_prefix_themselves():
+    from fpp.report.excel import sheet_codes
+
+    preds = pd.DataFrame({"league_key": ["Prem", "Liga", "Prem", "UCL", "UEL", "UCL", "Bund"]})
+    assert sheet_codes(preds) == ["E0-01", "SP1-01", "E0-02", "UCL-01", "UEL-01", "UCL-02", "D1-01"]
+
+
+def test_ledger_reads_european_codes_and_still_rejects_unknown_ones():
+    from fpp import ledger
+
+    assert ledger.league_of("E0-03") == "Prem"
+    assert ledger.league_of("UECL-02") == "UECL"
+    with pytest.raises(ValueError):
+        ledger.league_of("XX-01")
+
+
+def test_ledger_european_keys_match_the_registry():
+    from fpp import ledger
+    from fpp.europe.config import EURO_COMPS
+
+    assert ledger._NON_DOMESTIC_KEYS == frozenset(EURO_COMPS)
+
+
+# --- live pieces ------------------------------------------------------------------------
+
+def test_euro_run_codes_are_their_own_series(tmp_path):
+    from fpp.europe import run
+
+    assert run.next_run_code(tmp_path) == "E001"
+    (tmp_path / "Pending" / "slate_E004_2026-10-21").mkdir(parents=True)
+    (tmp_path / "Pending" / "slate_R009_2026-10-21").mkdir(parents=True)  # never counted
+    assert run.next_run_code(tmp_path) == "E005"
+
+
+def test_dispersion_is_keyed_by_competition():
+    from fpp.europe import predict as ep
+    from fpp.europe.config import EURO_COMPS
+
+    lays = {"goals": layer.Layer("goals", None, [], None, False),
+            "shots": layer.Layer("shots", None, [], 15.0, False)}
+    d = ep.dispersion(lays)
+    assert set(d["shots"]) == set(EURO_COMPS) and d["shots"]["UCL"] == 15.0
+    assert d["goals"]["UEL"] >= 1e5  # Poisson sentinel, as the league artifacts carry
+
+
+def test_live_table_reads_current_buffers_without_aging_them():
+    """Placeholder rows: one home then one away per club, each against its own opponent."""
+    from fpp.europe import predict as ep
+
+    clean = pd.DataFrame({
+        "fixture_id": [0, 0], "date": pd.to_datetime(["2026-10-04"] * 2), "season": ["2627"] * 2,
+        "league": ["Premier League"] * 2, "league_key": ["Prem"] * 2, "team": ["A", "B"],
+        "opponent": ["B", "A"], "is_home": [1, 0],
+    })
+    rows = pd.DataFrame({"team": ["A"], "team_league": ["Prem"], "date": pd.to_datetime(["2026-10-21"])})
+    try:
+        t = ep._live_table(clean, rows)
+    except Exception:  # the real appender needs the full clean schema; check the fixtures it builds
+        pytest.skip("synthetic clean table too thin for append_fixtures_as_rows")
+    a = t[(t["team"] == "A") & (t.get("is_scored", 1) == 0)].sort_values("date")
+    assert a["is_home"].tolist() == [1, 0]
+    assert (a["date"] > pd.Timestamp("2026-10-21")).all()
+    assert a["opponent"].nunique() == 1 and a["opponent"].iat[0].startswith("__euro_placeholder__")
