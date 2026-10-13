@@ -169,7 +169,7 @@ def baseline_mu(train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
     by_venue = train.groupby("is_home")["actual"].mean()
     pooled = train["actual"].mean()
     single = np.array([stage_group(s, l) == "single" for s, l in zip(test["stage"], test["leg"])])
-    mu = test["is_home"].map(by_venue).to_numpy(dtype=float)
+    mu = test["is_home"].map(by_venue).to_numpy(dtype=float, copy=True)
     mu[single] = pooled
     return mu
 
