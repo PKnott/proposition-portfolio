@@ -71,32 +71,104 @@ def walk_forward(offs: dict[str, pd.DataFrame], seasons=WALK_FORWARD, alphas=ALP
     return {"scores": scores, "tests": tests, "coefficients": pd.DataFrame(thetas)}
 
 
+# --- Tuning -------------------------------------------------------------------
+
+ALPHA_GRID = (0.03, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 3.0)
+
+
+def _wf_logloss(rows: pd.DataFrame, t: str, seasons, alpha: float, min_train: int) -> float:
+    pred = layer.walk_forward(rows, t, seasons, alpha=alpha, min_train_seasons=min_train)["rows"]
+    if pred.empty:
+        return float("nan")
+    return float(layer.score(pred, t).set_index("variant").at["layer", "logloss"])
+
+
+def choose_alpha(rows: pd.DataFrame, t: str, seasons, grid=ALPHA_GRID, min_train: int = 1) -> float:
+    """The grid alpha with the lowest walk-forward log loss over ``seasons``."""
+    scores = {a: _wf_logloss(rows, t, seasons, a, min_train) for a in grid}
+    scores = {a: v for a, v in scores.items() if np.isfinite(v)}
+    return min(scores, key=scores.get)
+
+
+def nested(offs: dict[str, pd.DataFrame], seasons=WALK_FORWARD, grid=ALPHA_GRID) -> dict:
+    """Walk-forward with alpha chosen inside each fold, from earlier seasons only.
+
+    The outer score is what the *procedure* -- tune on the past, predict the next
+    season -- is worth. A score at a single alpha picked after seeing every
+    season is not that, and is flattering by however much the pick was luck.
+    """
+    preds, picks = {}, []
+    for t, rows in offs.items():
+        first = int(rows.loc[rows["mu_dom"].notna(), "year"].min())
+        parts = []
+        for y in seasons:
+            inner = [s for s in range(first + 1, y)]
+            a = choose_alpha(rows, t, inner, grid) if inner else grid[len(grid) // 2]
+            picks.append({"target": t, "season": y, "alpha": a})
+            p = layer.walk_forward(rows, t, [y], alpha=a, min_train_seasons=2)["rows"]
+            parts.append(p.assign(alpha=a))
+        preds[t] = pd.concat(parts, ignore_index=True)
+    return {"preds": preds, "picks": pd.DataFrame(picks)}
+
+
+def coefficient_intervals(rows: pd.DataFrame, t: str, alpha: float, n_boot: int = 300,
+                          seed: int = 2026) -> pd.DataFrame:
+    """Point estimates and fixture-bootstrap 90% intervals for the layer's coefficients.
+
+    Resampled by fixture, not by team-row: the two sides of a match share
+    everything about it, and resampling them apart would understate the spread.
+    """
+    r = rows[rows["mu_dom"].notna() & rows["actual"].notna()]
+    point = layer.fit(r, t, alpha=alpha).coefficients()
+    fx = r["fixture_id"].unique()
+    groups = {f: g for f, g in r.groupby("fixture_id")}
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(n_boot):
+        pick = rng.choice(fx, size=len(fx), replace=True)
+        b = pd.concat([groups[f] for f in pick], ignore_index=True)
+        draws.append(layer.fit(b, t, alpha=alpha).coefficients())
+    d = pd.DataFrame(draws)
+    return pd.DataFrame({"estimate": point, "lo90": d.quantile(0.05), "hi90": d.quantile(0.95)})
+
+
+# --- Holdout -------------------------------------------------------------------
+
 HOLDOUT_LOG = EURO_ARTIFACTS / "holdout_scored.json"
 
 
-def holdout(offs: dict[str, pd.DataFrame], *, alpha: float, form: bool, force: bool = False) -> pd.DataFrame:
+def holdout(offs: dict[str, pd.DataFrame], config: dict[str, float | None], *,
+            force: bool = False) -> dict:
     """Score the held-out season, once. Refuses a second time unless forced.
 
-    Settings must be decided before calling: the point of a holdout is that
-    nothing about the model is chosen after looking at it.
+    ``config`` is ``{target: alpha}``, with ``None`` meaning the at-par league
+    model alone. Settings must be decided before calling: the point of a holdout
+    is that nothing about the model is chosen after looking at it.
     """
     y = season_sort_key(test_season())
     if HOLDOUT_LOG.exists() and not force:
         raise RuntimeError(f"holdout already scored: {HOLDOUT_LOG.read_text()}")
-    out = []
+    table, preds = [], {}
     for t, rows in offs.items():
-        pred = layer.walk_forward(rows, t, [y], alpha=alpha, form=form,
+        a = config[t]
+        pred = layer.walk_forward(rows, t, [y], alpha=a if a is not None else 0.3,
                                   min_train_seasons=1)["rows"]
-        sc = layer.score(pred, t)
-        out.append({"target": t, **{f"ll_{r.variant}": r.logloss for r in sc.itertuples()},
-                    "n": int(sc["n"].iat[0]),
-                    "offset_over_base": describe_significance(layer.significance(pred, t, "off", "base")),
-                    "layer_over_offset": describe_significance(layer.significance(pred, t, "layer", "off"))})
+        final = "layer" if a is not None else "off"
+        sc = layer.score(pred, t).set_index("variant")["logloss"]
+        s_final = layer.significance(pred, t, final, "base")
+        s_step = layer.significance(pred, t, "layer", "off")
+        table.append({
+            "target": t, "config": f"layer, alpha={a}" if a is not None else "at par only",
+            "n": int(s_final["n"]), "ll_base": sc["base"], "ll_off": sc["off"], "ll_layer": sc["layer"],
+            "final_vs_base": f"{(sc[final] / sc['base'] - 1) * 100:+.1f}%",
+            "final_over_base": describe_significance(s_final),
+            "layer_over_off": describe_significance(s_step),
+        })
+        preds[t] = pred
     HOLDOUT_LOG.parent.mkdir(parents=True, exist_ok=True)
     HOLDOUT_LOG.write_text(json.dumps({"date": date.today().isoformat(), "season": test_season(),
-                                       "alpha": alpha, "form": form,
-                                       "artifact": RunContext.load().version}))
-    return pd.DataFrame(out)
+                                       "config": config, "artifact": RunContext.load().version}))
+    return {"table": pd.DataFrame(table), "preds": preds}
 
 
 def counts(stats: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -110,4 +182,5 @@ def counts(stats: pd.DataFrame | None = None) -> pd.DataFrame:
     return tab.join(allm)
 
 
-__all__ = ["WALK_FORWARD", "ALPHAS", "load_offsets", "walk_forward", "holdout", "counts", "HOLDOUT_LOG"]
+__all__ = ["WALK_FORWARD", "ALPHAS", "ALPHA_GRID", "load_offsets", "walk_forward", "choose_alpha", "nested",
+           "coefficient_intervals", "holdout", "counts", "HOLDOUT_LOG"]
