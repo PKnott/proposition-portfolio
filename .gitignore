@@ -43,3 +43,6 @@ edge-book-handoff.pdf
 
 # Local tooling (contains a site-specific scraper); not published
 .claude/
+
+# European offsets: a cache rebuilt from the clean table and Euro stats
+artifacts/euro/*/offsets_*.parquet
