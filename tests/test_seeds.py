@@ -283,7 +283,34 @@ def test_upcoming_fixtures_get_real_schedule_context_not_nan(clean_table):
 
     for col in ("team_matches_14d", "opp_matches_14d"):
         assert upcoming[col].notna().all(), f"{col} is NaN on rows being predicted"
-        assert upcoming[col].nunique() > 1, f"{col} is constant on upcoming fixtures"
+
+    # Computed, not filled: each count must match the club's schedule, counted
+    # here independently. This used to assert the column was not constant, which
+    # is false whenever the next round follows an international break -- every
+    # club then has genuinely played nothing in the prior fortnight, and a correct
+    # column of zeros failed the test. A NaN or a default fill disagrees with the
+    # count; a true zero agrees with it.
+    from fpp.paths import HISTORIC_ALL_COMP, all_comp_fixtures
+    from fpp.config import canonical_team, current_season_label
+
+    frames = [pd.read_csv(p, parse_dates=["date"])
+              for p in (HISTORIC_ALL_COMP, all_comp_fixtures(current_season_label())) if p.exists()]
+    dates = pd.concat([*(f[["date", "team"]] for f in frames),
+                       combined[["date", "team"]]], ignore_index=True)
+    dates["team"] = dates["team"].map(clean.canonical_team)
+    dates["date"] = pd.to_datetime(dates["date"])
+    by_team = {t: np.sort(g["date"].unique()) for t, g in dates.groupby("team")}
+    window = pd.Timedelta(days=clean.CONGESTION_DAYS)
+    for r in upcoming.itertuples():
+        d = by_team[canonical_team(r.team)]
+        day = np.datetime64(pd.Timestamp(r.date))
+        expected = int(((d >= day - window) & (d < day)).sum())
+        assert r.team_matches_14d == expected, (
+            f"{r.team} on {r.date:%Y-%m-%d}: team_matches_14d={r.team_matches_14d}, "
+            f"schedule says {expected}")
+
+    # Rest days do vary after a break -- clubs last played on different days.
+    assert upcoming["team_rest_days"].nunique() > 1, "team_rest_days is constant on upcoming fixtures"
     # Rest days can legitimately be missing for a club with no schedule history
     # pulled yet -- a promoted side ESPN has no id row for -- but not for most.
     assert upcoming["team_rest_days"].notna().mean() > 0.8
