@@ -1,0 +1,27 @@
+{
+  "artifact_version": "v2026-08-25",
+  "clean_rows": 43178,
+  "clean": "6197f2e123045ba9da3989ba4a851182b22c687efd062f1d78504887026bf88f",
+  "targets": {
+    "goals": {
+      "rows": 39526,
+      "X": "74985292a0a603b269884d8c9da4aaaa84a7e372f9383c9b252d72c51fbeaaed",
+      "y": "a860ce01647c0a1934398b866eebb0b2a347271ebb6f8af2ae49858cd8343343"
+    },
+    "shots": {
+      "rows": 39526,
+      "X": "dae941998c7382230e18c640aa1751f38273dea27e16c1b3f31786f65b6ededb",
+      "y": "a860ce01647c0a1934398b866eebb0b2a347271ebb6f8af2ae49858cd8343343"
+    },
+    "sot": {
+      "rows": 39526,
+      "X": "6d9670c527dbaf98cedecdc63ac059c02a93993dc32880f28894dfda8f169321",
+      "y": "a860ce01647c0a1934398b866eebb0b2a347271ebb6f8af2ae49858cd8343343"
+    },
+    "corners": {
+      "rows": 39526,
+      "X": "24588dd868199795e3992756948d0809134535a2237e6396b383397583909453",
+      "y": "a860ce01647c0a1934398b866eebb0b2a347271ebb6f8af2ae49858cd8343343"
+    }
+  }
+}
