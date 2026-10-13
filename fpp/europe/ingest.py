@@ -44,21 +44,44 @@ _MATCH_DAYS = {1, 2, 3}  # Tue, Wed, Thu
 _EVERY_DAY_FROM = {2019: pd.Timestamp("2020-07-01")}
 
 
-def _opener_path(slug: str, year: int, cache_dir: Path) -> Path:
-    return cache_dir / f"Schedule_{slug}_{year}0701.json"
+def _calendar_year(payload: dict) -> int | None:
+    """Start year of the season a scoreboard's calendar block describes."""
+    cal = (payload.get("leagues") or [{}])[0].get("calendar") or []
+    for block in cal:
+        if isinstance(block, dict) and block.get("endDate"):
+            end = pd.Timestamp(block["endDate"])
+            return end.year - 1  # a season ends the summer after it starts
+    return None
+
+
+# Dates asked for a season's calendar, in order. 1 July is the natural opener,
+# but ESPN answers with whichever season is *running* on the date asked: on
+# 1 July 2020 that was still 2019/20, whose finals were played in August. The
+# fallbacks sit safely inside the new season's group stage.
+_OPENER_DAYS = ("0701", "1001", "1101")
 
 
 def season_calendar(comp: str, year: int, cache_dir: Path | None = None) -> dict:
-    """The season-opener scoreboard for one competition-season, cached."""
+    """The scoreboard whose calendar describes ``year``'s season, cached.
+
+    Checked, not assumed: a payload describing another season is refetched on a
+    later date rather than planned from, which would fetch the wrong season's
+    match days and report nothing missing.
+    """
     cache_dir = cache_dir or EURO_CACHE
     cache_dir.mkdir(parents=True, exist_ok=True)
     slug = EURO_COMPS[comp].espn_slug
-    path = _opener_path(slug, year, cache_dir)
-    if path.exists():
-        return json.loads(path.read_text())
-    payload = get_json(f"{ESPN_SITE_API}/{slug}/scoreboard?dates={year}0701")
-    path.write_text(json.dumps(payload))
-    return payload
+    payload: dict = {}
+    for day in _OPENER_DAYS:
+        path = cache_dir / f"Schedule_{slug}_{year}{day}.json"
+        if path.exists():
+            payload = json.loads(path.read_text())
+        else:
+            payload = get_json(f"{ESPN_SITE_API}/{slug}/scoreboard?dates={year}{day}")
+            path.write_text(json.dumps(payload))
+        if _calendar_year(payload) in (year, None):
+            return payload
+    raise RuntimeError(f"{comp} {year}: no ESPN date tried returned that season's calendar")
 
 
 def season_dates(payload: dict, year: int) -> set[str]:

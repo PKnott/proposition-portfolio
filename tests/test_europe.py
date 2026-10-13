@@ -145,3 +145,11 @@ def test_layer_recovers_a_planted_league_gap():
     # and no spurious defensive gap
     defs = np.array([c[f"def_{lk}"] for lk in layer.LEAGUE_KEYS])
     assert np.ptp(defs) < 0.06
+
+
+def test_calendar_year_reads_the_season_a_payload_describes():
+    # ESPN on 1 July 2020 still described 2019/20, whose finals ran into August
+    running = {"leagues": [{"calendar": [{"startDate": "2019-06-01T04:00Z", "endDate": "2020-08-24T03:59Z"}]}]}
+    new = {"leagues": [{"calendar": [{"startDate": "2020-07-01T04:00Z", "endDate": "2021-07-01T03:59Z"}]}]}
+    assert ingest._calendar_year(running) == 2019
+    assert ingest._calendar_year(new) == 2020
