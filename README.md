@@ -33,7 +33,7 @@ simulation → out-of-sample attribution**
 | **Correlation modelling** | Positions in the same match are priced with a correlated joint distribution, clamped to Fréchet bounds |
 | **Risk and sizing** | Edge-aware, Sharpe-optimal leg weights, a drawdown-constrained fraction of Kelly, and explicit model-risk haircuts |
 | **Simulation** | 4,000-path × 100-round Monte Carlo for drawdown risk, and p5/p50/p95 wealth fans for compounding |
-| **Engineering** | A typed Python package with 515 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
+| **Engineering** | A typed Python package with 543 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
 
 ---
 
@@ -177,9 +177,12 @@ Minkowski sum, and a dynamic programme can walk it event by event. Below 2 × 10
 records which claim it is making. Against full enumeration on a 26-event slate,
 the search found all 90 frontier portfolios exactly.
 
-Two positions from the same match enter with a correlation graded by what they
-share. The joint `P(both)` is clamped to the Fréchet bounds, so an impossible
-correlation is never imposed. Each portfolio's full return distribution comes
+Up to three positions from the same match can enter a portfolio: two on one
+team (different statistics) and one on the other. Each enters with correlations
+graded by what the legs share, measured on settled slates. A pair's joint
+`P(both)` is clamped to the Fréchet bounds, so an impossible correlation is never
+imposed; a triple's joint outcome is built from its three pairwise correlations
+with no further three-way term. Each portfolio's full return distribution comes
 from grid convolution, at about 1 ms per portfolio, vectorised across the pool. A
 saddlepoint approximation was tried first and rejected: on lumpy discrete returns
 it was several times less accurate than the grid.
@@ -206,7 +209,10 @@ a perfect model. Both terms stay at zero until the data supports a value.
 ### 7. Out-of-sample attribution
 
 Every run is captured to a ledger keyed structurally on (date, league, teams,
-market, team, line) and settled against results as they arrive. The analysis asks
+market, team, line) and settled against results as they arrive. Each run also
+records the model that priced it -- the artifact version, a fingerprint of the
+artifact files, the feature and scoring hashes and the code version -- so which
+model produced a result is a recorded fact rather than an inference. The analysis asks
 four questions, in order:
 
 1. Is the model better than the market price it is compared against?
@@ -218,6 +224,15 @@ A slate contributes thousands of rows, but its portfolios are overlapping
 combinations of the same few dozen propositions and move together. So every table
 reports `n_slates` beside `n`, and nothing counts as evidence until `n_slates`
 reaches double figures.
+
+`07_Analysis` runs those questions on every slate the current model priced, and
+replays each slate through the real portfolio builder to test changes before
+they ship. On 14 slates it re-measured the same-match correlations (opposite-team
+legs are uncorrelated; same-team legs on different statistics sit near 0.17),
+found the shots model under-predicting by about 11 points in every probability
+band, and led to a per-league calibration shift on shots probabilities. Both the
+raw and the shifted probability are recorded on every run, so the shift can be
+refitted on the model's own output as evidence accumulates.
 
 ---
 
@@ -247,11 +262,14 @@ The final stage writes one self-contained HTML file. It needs no server.
   are slightly under-predicted at low scores.
 - **Pre-match aggregates only.** There are no team sheets, injuries or in-play
   data.
-- **Small settled sample.** The portfolio and sizing results rest on two settled
-  slates so far. Between-slate variance, the one term that adding legs cannot
-  diversify away, is effectively unmeasured.
-- **Correlation structure.** The correlation model is imposed rather than learned,
-  and it is estimated on the same early sample.
+- **Small settled sample.** The attribution and replay results rest on 13–14
+  settled slates. Between-slate variance, the one term that adding legs cannot
+  diversify away, is still poorly measured, and most replay differences are not
+  yet statistically distinguishable.
+- **Correlation structure.** Correlations are measured from settled data, but
+  per statistic pair they remain noisy, and triples assume no three-way term.
+- **Calibration layer.** The shots shift is fitted on 12 slates in two leagues;
+  its size is estimated to within several percentage points, not known.
 - **Conditional on the model.** Everything downstream of pricing assumes the model
   probabilities are right. If they are optimistic by more than about 8 percentage
   points across the board, the edge disappears.
@@ -273,7 +291,8 @@ The final stage writes one self-contained HTML file. It needs no server.
 | Evaluate | `04_Evaluation` | Held-out season, touched once; significance and calibration |
 | Predict | `05_Run` | Score fixtures; write the predictions workbook and the odds form |
 | Portfolio | `06_Split` | Edge, portfolio search, sizing and the Edge Book |
-| Settle | `fpp.ledger`, `fpp.analysis` | Capture, settle and attribute results (the driver notebook is not yet published) |
+| Settle | `fpp.ledger` | Capture each run and settle it against results |
+| Analyse | `07_Analysis` | Correlation, calibration and builder replays on settled slates (read-only) |
 
 `fpp/` holds the logic, and the notebooks are thin drivers over it.
 
@@ -294,16 +313,17 @@ fpp/                        the package
 ├── calibration.py          ECE, Brier decomposition, slope, quantile bands, verdicts
 ├── predict.py              production training and fixture scoring
 ├── staking.py              price, edge, dominance
-├── portfolio.py            correlated pairs, frontier search, exact return distributions
+├── portfolio.py            correlated pairs and triples, frontier search, exact return distributions
 ├── growth.py               drawdown-constrained sizing and Monte Carlo projection
 ├── ledger.py  analysis.py  capture, settle and attribute
+├── study.py  study_plots.py  correlation and calibration studies, builder replays
 └── report/                 market probabilities, workbooks, Edge Book export
 
-Notebooks/                  00 – 06 drivers
+Notebooks/                  00 – 07 drivers
 app/edge-book/              Edge Book front end (HTML, CSS, JS)
 artifacts/<target>/<ver>/   frozen window, features, params, CV and provenance
 docs/                       studies
-tests/                      515 regression tests
+tests/                      543 regression tests
 ```
 
 ## Reproducibility
@@ -386,7 +406,8 @@ on Python 3.12 and 3.13.
 
 - A Dixon–Coles or bivariate-Poisson correction for 1X2 and correct-score markets
 - Repeat the edge-capacity study once more slates have settled
-- Calibrate the model-risk haircuts from settled data
+- Refit the shots calibration and re-run the builder replays at 25–30 slates
+- Find and fix the cause of the shots under-prediction in the model itself
 - Closing-line capture, for a CLV benchmark on top of the ledger
 - Lower English divisions; the pooling and promotion machinery is built for them
 - Player availability and injury data
