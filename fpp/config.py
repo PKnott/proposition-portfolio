@@ -501,7 +501,7 @@ PAIR_KEEP = 8
 # one.
 #
 # Evidence for switching on: 13 slates (R006-R022 as run) replayed through the
-# builder with triples off and on. The 06 pick's bankroll went x1.56 -> x1.74
+# builder with triples off and on. The 06 pick's capital multiple went x1.56 -> x1.74
 # (x1.12, slate-bootstrap range x0.95-x1.38): 5 slates better, 2 worse, 6
 # identical because no valid triple was offered. The whole frontier's median
 # realised return was unchanged (+0.002). Encouraging, not proven; triples are

@@ -8,7 +8,7 @@ Colour carries one meaning throughout:
 
 * **blue = the model, orange = the price**, wherever the two are compared;
 * aqua = a measured correlation, yellow = the value currently in config;
-* diverging maps have a grey zero, and red is always the side that costs money:
+* diverging maps have a grey zero, and red is always the side that costs return:
   outcomes landing together (correlation) or landing less than predicted
   (calibration);
 * the four stats get their own colours only in the dampening section.
@@ -161,7 +161,7 @@ def correlation_by_gap(pairs: pd.DataFrame, rho_table, placebo: dict, configured
            xticks=[1, 2, 3, 4], xticklabels=["1", "2", "3", "4+"])
     ax.legend(loc="upper right", frameon=False)
     _title(fig, "Two lines on the same team's stat: overlap by distance",
-           "Adjacent lines are close to the same bet; the further apart, the more "
+           "Adjacent lines are close to the same position; the further apart, the more "
            "independent.")
     return fig
 
@@ -229,7 +229,7 @@ def reliability(rel: pd.DataFrame, s: pd.DataFrame, by: str = "target"):
     axes[-1].legend(frameon=False, loc="lower right")
     _title(fig, "Reliability: does a 30% proposition land 30% of the time?",
            "Shaded bands are 95% Wilson intervals. Blue = the model's p, orange = 1/odds "
-           "(still carrying the book's margin).")
+           "(still carrying the market's margin).")
     return fig
 
 
@@ -237,8 +237,8 @@ def gap_heatmap(gaps: dict[str, tuple[pd.DataFrame, pd.DataFrame]]):
     """Hit rate minus mean predicted probability, by stat × league, for each source.
 
     Positive (blue): the propositions landed more often than predicted, which on
-    an all-Overs book is error in our favour. Negative (red): they landed less
-    often, the direction that costs money.
+    a portfolio of Overs is error in our favour. Negative (red): they landed less
+    often, the direction that costs return.
     """
     fig, axes = plt.subplots(1, len(gaps), figsize=(6.2 * len(gaps), 4.2), sharey=True)
     axes = np.atleast_1d(axes)
@@ -256,7 +256,7 @@ def gap_heatmap(gaps: dict[str, tuple[pd.DataFrame, pd.DataFrame]]):
         ax.set(title=name, xlabel="", ylabel="")
         ax.tick_params(left=False, bottom=False)
     _title(fig, "Where the probabilities are too low, and where too high",
-           "Blue: landed more than predicted (in our favour on Overs). "
+           "Blue: landed more than predicted (in our favour, as every position is an Over). "
            "Red: landed less than predicted (the costly direction).")
     return fig
 
@@ -302,7 +302,7 @@ def market_forest(comp: pd.DataFrame):
 
 
 def selection(sel_all: pd.DataFrame, sel_by: pd.DataFrame):
-    """Predicted against landed, for the propositions bet and the ones passed over.
+    """Predicted against landed, for the propositions held and the ones passed over.
 
     Each row is a dumbbell: blue is the model's mean p, orange the price's, and
     the black dot (with its 95% interval) is how often they actually landed. A
@@ -310,7 +310,7 @@ def selection(sel_all: pd.DataFrame, sel_by: pd.DataFrame):
     """
     t = pd.concat([sel_all.assign(target="all"), sel_by], ignore_index=True)
     order = ["all", *[x for x in TARGETS if x in set(t["target"])]]
-    groups = ["not qualified", "qualified (bet)"]
+    groups = ["not qualified", "qualified (held)"]
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.2), sharex=True)
     for ax, grp in zip(axes, groups):
         d = t[t["qualified"] == grp].set_index("target").reindex(order).dropna(subset=["n"])
@@ -326,7 +326,7 @@ def selection(sel_all: pd.DataFrame, sel_by: pd.DataFrame):
         ax.grid(axis="y", visible=False)
         ax.set(title=grp, xlabel="probability")
     axes[1].legend(frameon=False, fontsize=8.5, loc="lower right")
-    _title(fig, "On the bets actually placed, is the model still too low?",
+    _title(fig, "On the positions actually taken, is the model still too low?",
            "Black dot right of blue: landed more than the model said. "
            "Left of blue: the model was too high on that group.")
     return fig
@@ -413,24 +413,24 @@ def recalibration_forest(summary: pd.DataFrame, by_level: pd.DataFrame | None = 
 def push_deflate(summary: pd.DataFrame, tuning: pd.DataFrame):
     """The backtest on one page: what each push does to growth and to honesty.
 
-    Left: bankroll multiple over every held-out slate against the push `k`, with
+    Left: capital multiple over every held-out slate against the push `k`, with
     and without the learnt deflation; the dashed line is today. Right: on the
-    bets each push selects, what the staking probability said against what
+    positions each push selects, what the sizing probability said against what
     landed. Deflation exists to close that gap.
     """
     t = summary[summary["strategy"] != "tuned"].copy()
     t["mode"] = np.where(t["strategy"].str.endswith("push+deflate"), "push + deflate", "push only")
-    today = float(t.loc[t["strategy"] == "k=0 push only", "bankroll_x"].iloc[0])
+    today = float(t.loc[t["strategy"] == "k=0 push only", "capital_x"].iloc[0])
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 4.6))
     styles = {"push + deflate": dict(color=MEASURED, marker="o"),
               "push only": dict(color=NEUTRAL, marker="s", ls="--")}
     for mode, g in t.groupby("mode"):
         g = g.sort_values("k")
-        ax.plot(g["k"], g["bankroll_x"], lw=2, ms=7, label=mode, **styles[mode])
+        ax.plot(g["k"], g["capital_x"], lw=2, ms=7, label=mode, **styles[mode])
     ax.axhline(today, color=INK, lw=1, ls=":")
     ax.text(t["k"].max(), today, " today", va="bottom", ha="right", fontsize=8.5, color=INK)
     ax.set(xlabel="push k  (0 = none, 1 = the full calibration fit)",
-           ylabel="bankroll multiple, all held-out slates",
+           ylabel="capital multiple, all held-out slates",
            title="Growth, out of slate")
     ax.legend(frameon=False, loc="center right")
 
@@ -438,8 +438,8 @@ def push_deflate(summary: pd.DataFrame, tuning: pd.DataFrame):
         g = g.sort_values("k")
         ax2.plot(g["k"], (g["said"] - g["landed"]) * 100, lw=2, ms=7, label=mode, **styles[mode])
     ax2.axhline(0, color=INK, lw=1)
-    ax2.set(xlabel="push k", ylabel="staking p − hit rate on the bets (pp)",
-            title="How over-confident the staking p is")
+    ax2.set(xlabel="push k", ylabel="sizing p − hit rate on the positions (pp)",
+            title="How over-confident the sizing p is")
     d = tuning.filter(like="d@")
     ks = [float(c[2:]) for c in d.columns]
     ax2b = ax2.twinx()
@@ -453,22 +453,23 @@ def push_deflate(summary: pd.DataFrame, tuning: pd.DataFrame):
     hi = max(ax2.get_ylim()[1], ax2b.get_ylim()[1])
     ax2.set_ylim(lo, hi); ax2b.set_ylim(lo, hi)
     ax2b.legend(frameon=False, loc="upper left", fontsize=8.5)
-    _title(fig, "Push before selecting, deflate before staking",
+    _title(fig, "Push before selecting, deflate before sizing",
            "Every amount learnt without the slate it is scored on. "
-           "Quarter-Kelly per bet, at most 20% of the bankroll per slate.")
+           "Quarter-Kelly per position, at most 20% of capital per slate.")
     return fig
 
 
 REPLAY_COLOURS = {"today": "#0b0b0b", "deflate all": NEUTRAL,
                   "half push all, deflate all": "#4a3aa7",
                   "shots push, deflate others": "#008300",
-                  "shots push, deflate all": "#e87ba4"}
+                  "shots push, deflate all": "#e87ba4",
+                  "shots push, no deflation": "#8a5a00"}
 
 
 def portfolio_replay(bt: pd.DataFrame):
-    """The real builder, slate by slate: the bankroll path, and promised against delivered.
+    """The real builder, slate by slate: the capital path, and promised against delivered.
 
-    Left: the bankroll under each strategy across the held-out slates in order.
+    Left: capital under each strategy across the held-out slates in order.
     Right: today's pick on each slate, the return it promised per £1 against the
     return it delivered. The gap is the leg-level optimism compounded by picking
     the best-looking portfolio.
@@ -485,7 +486,7 @@ def portfolio_replay(bt: pd.DataFrame):
                 label=f"{name}  ×{path[-1]:.2f}", zorder=3 if name == "today" else 2)
     ax.axhline(1, color=NEUTRAL, lw=1, ls=":")
     ax.set_xticks(range(len(order) + 1), ["start", *order], rotation=60, fontsize=8)
-    ax.set(ylabel="bankroll (start = 1)", title="Bankroll through the real builder")
+    ax.set(ylabel="capital (start = 1)", title="Capital through the real builder")
     ax.legend(frameon=False, fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.2),
               ncol=2)
 
@@ -497,17 +498,17 @@ def portfolio_replay(bt: pd.DataFrame):
     ax2.axvline(1, color=NEUTRAL, lw=1, ls=":")
     ax2.set_yticks(y, [f"{s}  ({int(n)} legs)" for s, n in zip(t.index, t["legs"])], fontsize=8.5)
     ax2.grid(axis="y", visible=False)
-    ax2.set(xlabel="return per £1 staked", title="Today's pick: promised vs delivered")
+    ax2.set(xlabel="return per £1 allocated", title="Today's pick: promised vs delivered")
     ax2.legend(frameon=False, fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.2),
                ncol=2)
-    _title(fig, "Every slate through 06_Split's own search, pick and stake",
+    _title(fig, "Every slate through 06_Split's own search, pick and sizing",
            "Push and deflation learnt on the other slates. At most two legs per match, "
            "pairs priced with PAIR_CORRELATION.")
     return fig
 
 
 def triples_replay(summary: pd.DataFrame):
-    """Triples off against on, slate by slate: the bankroll path and each slate's swing."""
+    """Triples off against on, slate by slate: the capital path and each slate's swing."""
     a = summary.attrs
     order = list(summary.index)
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.6), gridspec_kw={"width_ratios": [1.2, 1]})
@@ -517,7 +518,7 @@ def triples_replay(summary: pd.DataFrame):
         ax.plot(range(len(order) + 1), path, color=colour, lw=lw, label=f"{name}  ×{path[-1]:.2f}")
     ax.axhline(1, color=NEUTRAL, lw=1, ls=":")
     ax.set_xticks(range(len(order) + 1), ["start", *order], rotation=60, fontsize=8)
-    ax.set(ylabel="bankroll (start = 1)", title="The 06 pick, staked as 06 stakes it")
+    ax.set(ylabel="capital (start = 1)", title="The 06 pick, sized as 06 sizes it")
     ax.legend(frameon=False, loc="upper left")
 
     d = (np.exp(summary["growth_on"] - summary["growth_off"]) - 1) * 100
@@ -528,10 +529,10 @@ def triples_replay(summary: pd.DataFrame):
     ax2.set_yticks(y, [f"{s}  ({int(n)} triple options)" for s, n in
                        zip(order, summary["triple_options"])], fontsize=8.5)
     ax2.grid(axis="y", visible=False)
-    ax2.set(xlabel="bankroll change from switching triples on (%)",
+    ax2.set(xlabel="capital change from switching triples on (%)",
             title="Where it mattered")
     _title(fig, "Three legs per match: two on one team, one on the other",
-           f"Off ×{a['bankroll_off']:.2f} → on ×{a['bankroll_on']:.2f}; gain ×{a['gain']:.2f} "
+           f"Off ×{a['capital_off']:.2f} → on ×{a['capital_on']:.2f}; gain ×{a['gain']:.2f} "
            f"(×{a['gain_lo']:.2f}–×{a['gain_hi']:.2f}); {a['better']} slates better, "
            f"{a['worse']} worse, {a['same']} unchanged.")
     return fig
@@ -559,7 +560,7 @@ def leg_cap(lc: pd.DataFrame):
     ax2.plot(x, P, "o-", color="#008300", lw=2, ms=7)
     ax2.set_xticks(x, labels)
     ax2.set(xlabel="per-leg cap", ylabel="% of frontier portfolios profitable",
-            title="Share that made money")
+            title="Share with a positive return")
     _title(fig, "The per-leg cap, tested on every viable portfolio",
            "Same legs restaked at each cap and settled; dashed line is today's 15%. "
            "Averages of per-slate means over 13 slates.")

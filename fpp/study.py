@@ -326,7 +326,7 @@ def gap_table(s: pd.DataFrame, rows: str = "target", cols: str = "league",
     """Hit rate minus mean predicted probability, and the count behind each cell.
 
     Positive means the propositions won more often than predicted (under-
-    prediction, which on an all-Overs book is in our favour). Negative is the
+    prediction, which -- every proposition being an Over -- is in our favour). Negative is the
     costly direction.
     """
     g = s.groupby([rows, cols], observed=True)
@@ -364,7 +364,7 @@ def selection_check(s: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
     Selecting on ``p * o >= 1`` picks out the rows where the model sits above the
     price, and those are disproportionately the rows where the model is too
     high. A model can therefore under-predict across the board and still
-    over-predict on exactly the bets it places. This shows whether that is
+    over-predict on exactly the positions it takes. This shows whether that is
     happening, and it is the table any constant has to be checked against: a
     shift that fixes the whole book can make the qualified set worse.
     """
@@ -380,7 +380,7 @@ def selection_check(s: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
                      "gap_pp": (k / n - g["p"].mean()) * 100,
                      "flat_roi": float((g["o"] * g["y"] - 1).mean())})
     out = pd.DataFrame(rows)
-    out["qualified"] = out["qualified"].map({True: "qualified (bet)", False: "not qualified"})
+    out["qualified"] = out["qualified"].map({True: "qualified (held)", False: "not qualified"})
     return out
 
 
@@ -606,7 +606,7 @@ def fitted_constants(s: pd.DataFrame, context: str | None = None,
     return t
 
 
-# --- 4. push, select, deflate, stake --------------------------------------
+# --- 4. push, select, deflate, size ---------------------------------------
 #
 # The model leans low across the board, but the propositions that clear
 # `p * o >= 1` are the ones where it happened to lean high. Two adjustments,
@@ -615,7 +615,7 @@ def fitted_constants(s: pd.DataFrame, context: str | None = None,
 # 1. **Push** before selection: ``logit p_push = logit p + k * (a + (b - 1) logit p)``,
 #    the recalibration fitted above, scaled by ``k``. ``k = 0`` is today's model;
 #    ``k = 1`` is the full calibration fit.
-# 2. **Deflate** before staking: ``p_stake = p_push - d``. ``d`` is the
+# 2. **Deflate** before sizing: ``p_stake = p_push - d``. ``d`` is the
 #    selection bias, i.e. how far the pushed probability sat above the hit rate *on
 #    the propositions it selected*, measured on slates the push never saw. It is
 #    an additive shift in probability, the same form as `config.PESSIMISM_B`.
@@ -648,7 +648,7 @@ def select(df: pd.DataFrame, p: np.ndarray) -> np.ndarray:
 
 
 def kelly_stakes(p_stake, o, frac: float = 0.25) -> np.ndarray:
-    """Fractional Kelly per bet; zero where the staking probability shows no edge."""
+    """Fractional Kelly per position; zero where the sizing probability shows no edge."""
     p_stake, o = np.asarray(p_stake, float), np.asarray(o, float)
     return frac * np.clip((p_stake * o - 1.0) / (o - 1.0), 0.0, None)
 
@@ -657,12 +657,12 @@ SLATE_CAP = 0.20
 
 
 def slate_growth(f, ret, cap: float = SLATE_CAP) -> float:
-    """Log growth of a bankroll that places every bet on one slate at stakes `f`.
+    """Log growth of capital that takes every position on one slate at sizes `f`.
 
-    Stakes are fractions of the bankroll, scaled down together if they would sum
+    Sizes are fractions of capital, scaled down together if they would sum
     to more than `cap` of it -- a slate is never allowed to risk the whole pot,
     as the protective stake never does. Unlike summed profit this punishes
-    over-betting: a probability that is too high stakes too much, and the log
+    over-sizing: a probability that is too high sizes too large, and the log
     charges for it.
     """
     f = np.asarray(f, float)
@@ -672,10 +672,10 @@ def slate_growth(f, ret, cap: float = SLATE_CAP) -> float:
     return float(np.log1p((f * ret).sum()))
 
 
-def _bet_stats(y, o, p_stake, sel, frac, cap=SLATE_CAP):
+def _position_stats(y, o, p_stake, sel, frac, cap=SLATE_CAP):
     f = kelly_stakes(p_stake, o, frac) * sel
     ret = o * y - 1.0
-    return {"log_growth": slate_growth(f, ret, cap), "bets": int(sel.sum()), "staked_bets": int((f > 0).sum()),
+    return {"log_growth": slate_growth(f, ret, cap), "positions": int(sel.sum()), "sized_positions": int((f > 0).sum()),
             "flat_pnl": float(ret[sel].sum()),
             "stake": float(f.sum()), "kelly_pnl": float((f * ret).sum()),
             "kelly_expected": float((f * (p_stake * o - 1.0)).sum()),
@@ -696,7 +696,7 @@ def push_deflate_backtest(s: pd.DataFrame, *, ks=PUSH_GRID, frac: float = 0.25,
 
     * `per_slate`: one row per held-out slate × strategy. The strategies are
       ``k=<k> push+deflate`` for every `k`, ``k=<k> push only`` (no deflation),
-      and ``tuned`` (the `k` with the best inner bankroll growth, chosen per fold
+      and ``tuned`` (the `k` with the best inner capital growth, chosen per fold
       from the training slates alone).
     * `tuning`: per fold, the push `(a, b)`, the deflation `d` for every `k`,
       and the `k` chosen. Their spread across folds is how stable the
@@ -704,9 +704,9 @@ def push_deflate_backtest(s: pd.DataFrame, *, ks=PUSH_GRID, frac: float = 0.25,
 
     `push_targets` restricts the push to those stats: it is fitted on their rows
     alone and every other proposition keeps its raw `p`. The deflation is still
-    learnt on, and applied to, every selected bet. `deflate_by_target` learns one
+    learnt on, and applied to, every selected position. `deflate_by_target` learns one
     deflation per stat instead, each pulled towards the pooled value by
-    `deflate_prior` pseudo-bets so a stat with few selections cannot run wild.
+    `deflate_prior` pseudo-observations so a stat with few selections cannot run wild.
     """
     y_all, p_all, o_all = s["y"].to_numpy(), s["p"].to_numpy(), s["o"].to_numpy()
     groups = s[group].astype(str).to_numpy()
@@ -791,12 +791,12 @@ def push_deflate_backtest(s: pd.DataFrame, *, ks=PUSH_GRID, frac: float = 0.25,
                 p_st = np.clip(pp - d, EPS, 1 - EPS)
                 rows.append({"slate": g, "strategy": label, "k": k,
                              "deflate": float(d[sel].mean()) if sel.any() else 0.0,
-                             **_bet_stats(y, o, p_st, sel, frac, cap)})
+                             **_position_stats(y, o, p_st, sel, frac, cap)})
             if k == k_best:
                 p_st = np.clip(pp - d_row, EPS, 1 - EPS)
                 rows.append({"slate": g, "strategy": "tuned", "k": k,
                              "deflate": float(d_row[sel].mean()) if sel.any() else 0.0,
-                             **_bet_stats(y, o, p_st, sel, frac, cap)})
+                             **_position_stats(y, o, p_st, sel, frac, cap)})
     return pd.DataFrame(rows), pd.DataFrame(tune)
 
 
@@ -805,30 +805,30 @@ def backtest_summary(per_slate: pd.DataFrame, baseline: str = "k=0 push only",
     """Totals per strategy, with slate-bootstrap intervals on the growth gain over `baseline`.
 
     `growth` is the summed log growth over every slate (`slate_growth`), so
-    ``exp(growth)`` is the bankroll multiple. `gain_*` compare it with `baseline`.
+    ``exp(growth)`` is the capital multiple. `gain_*` compare it with `baseline`.
 
     The slate is the unit resampled because it is the unit the strategy is
-    tuned and applied on, and the bets inside one slate share a matchday.
+    tuned and applied on, and the positions inside one slate share a matchday.
     """
     piv = per_slate.pivot_table(index="slate", columns="strategy", values="log_growth")
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(piv), size=(n_boot, len(piv)))
     rows = []
     for name, g in per_slate.groupby("strategy", sort=False):
-        t = g[["bets", "staked_bets", "flat_pnl", "stake", "kelly_pnl", "kelly_expected",
+        t = g[["positions", "sized_positions", "flat_pnl", "stake", "kelly_pnl", "kelly_expected",
                "said", "landed"]].sum()
         diff = (piv[name] - piv[baseline]).to_numpy()
         boot = diff[idx].sum(axis=1)
         rows.append({
             "strategy": name, "k": g["k"].iloc[0] if name != "tuned" else np.nan,
             "mean_deflate": float(g["deflate"].mean()),
-            "bets": int(t["bets"]), "staked_bets": int(t["staked_bets"]),
-            "said": t["said"] / t["bets"], "landed": t["landed"] / t["bets"],
-            "flat_roi": t["flat_pnl"] / t["bets"],
+            "positions": int(t["positions"]), "sized_positions": int(t["sized_positions"]),
+            "said": t["said"] / t["positions"], "landed": t["landed"] / t["positions"],
+            "flat_roi": t["flat_pnl"] / t["positions"],
             "kelly_roi": t["kelly_pnl"] / t["stake"] if t["stake"] else np.nan,
             "kelly_pnl": t["kelly_pnl"], "kelly_expected": t["kelly_expected"],
             "growth": float(g["log_growth"].sum()),
-            "bankroll_x": float(np.exp(g["log_growth"].sum())),
+            "capital_x": float(np.exp(g["log_growth"].sum())),
             "gain_vs_today": float(diff.sum()),
             "gain_lo": float(np.percentile(boot, 2.5)), "gain_hi": float(np.percentile(boot, 97.5)),
             "slates_better": int((diff > 1e-12).sum()), "slates_worse": int((diff < -1e-12).sum()),
@@ -839,10 +839,10 @@ def backtest_summary(per_slate: pd.DataFrame, baseline: str = "k=0 push only",
 
 # --- 5. the same question through the real portfolio builder --------------
 #
-# Everything above scores propositions one at a time. A slate is not bet that
+# Everything above scores propositions one at a time. A slate is not traded that
 # way: `06_Split` runs `portfolio.search` (qualify, at most two legs per match
 # priced with `PAIR_CORRELATION`, growth split, dominance), picks one portfolio
-# with the notebook's filter, and stakes it at `growth.suggested_fraction` --
+# with the notebook's filter, and sizes it at `growth.suggested_fraction` --
 # where `PESSIMISM_B` is the deflation hook. This section replays each held-out
 # slate through exactly that code.
 #
@@ -894,16 +894,16 @@ def _filled(rows: pd.DataFrame, p: np.ndarray) -> pd.DataFrame:
 def replay_slate(rows: pd.DataFrame, p_select: np.ndarray, biases: dict[str, np.ndarray],
                  *, leg_var: int = LEG_VAR, pick_rule: dict | None = None,
                  grid: int = REPLAY_GRID) -> list[dict]:
-    """One slate through `06_Split`: search, pick, stake, settle.
+    """One slate through `06_Split`: search, pick, size, settle.
 
     `p_select` is the probability the builder sees -- it qualifies, pairs,
     splits and picks on it. `biases` maps a strategy name to a per-row deflation
     passed to `growth.suggested_fraction` as its `bias`, which is what
     `PESSIMISM_B` does today with one number for every leg. One search serves
-    every bias, because deflation only changes the stake.
+    every bias, because deflation only changes the position size.
 
-    The bankroll moves by ``f * (R - 1)``, where ``R`` is the portfolio's realised
-    return per unit staked, and growth is ``log(1 + f (R - 1))``.
+    Capital moves by ``f * (R - 1)``, where ``R`` is the portfolio's realised
+    return per unit of capital allocated, and growth is ``log(1 + f (R - 1))``.
     """
     from . import portfolio as pf
     from .growth import growth_metrics, suggested_fraction
@@ -1000,6 +1000,7 @@ def _fold_plan(train: pd.DataFrame, test: pd.DataFrame, *, shots_k: float = 1.0,
     d_other = gap(pp_in, ~shots)
     d_pooled = gap(pp_in, np.ones(len(s), bool))
     plan["shots push"] = (p_te, {
+        "shots push, no deflation": np.zeros(te.sum()),
         "shots push, deflate others": np.where(shots[te], 0.0, d_other),
         "shots push, deflate all": np.full(te.sum(), d_pooled)})
     # V2: push every stat half way.
@@ -1023,7 +1024,8 @@ def _replay_task(args):
 
 def portfolio_backtest(s: pd.DataFrame, *, slates=AS_RUN_SLATES, as_run: pd.DataFrame | None = None,
                        workers: int = 4, cache: Path | str | None = None,
-                       refresh: bool = False, group: str = "run_code") -> pd.DataFrame:
+                       refresh: bool = False, group: str = "run_code",
+                       variants: tuple[str, ...] | None = None) -> pd.DataFrame:
     """Every held-out slate through the real builder, under each strategy.
 
     Each slate is replayed **as it was run** (`as_run`, default
@@ -1050,7 +1052,8 @@ def portfolio_backtest(s: pd.DataFrame, *, slates=AS_RUN_SLATES, as_run: pd.Data
         plan = _fold_plan(train, rows, group=group)
         deflations.append({"slate": held, **plan.pop("_deflation")})
         for variant, (p_sel, biases) in plan.items():
-            tasks.append((rows, p_sel, biases, held, variant))
+            if variants is None or variant in variants:
+                tasks.append((rows, p_sel, biases, held, variant))
 
     with ProcessPoolExecutor(max_workers=workers) as ex:
         results = [r for batch in ex.map(_replay_task, tasks) for r in batch]
@@ -1063,7 +1066,7 @@ def portfolio_backtest(s: pd.DataFrame, *, slates=AS_RUN_SLATES, as_run: pd.Data
 
 def portfolio_summary(bt: pd.DataFrame, baseline: str = "today", n_boot: int = 5000,
                       seed: int = 2026) -> pd.DataFrame:
-    """Bankroll multiple per strategy, and its slate-bootstrap gain over `baseline`."""
+    """Capital multiple per strategy, and its slate-bootstrap gain over `baseline`."""
     piv = bt.pivot_table(index="slate", columns="strategy", values="growth")
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(piv), size=(n_boot, len(piv)))
@@ -1076,12 +1079,12 @@ def portfolio_summary(bt: pd.DataFrame, baseline: str = "today", n_boot: int = 5
                      "mean_legs": g["legs"].mean(), "mean_shots_legs": g["shots_legs"].mean(),
                      "mean_f": g["f"].mean(), "mean_R": g["R"].mean(),
                      "mean_expected_R": g["expected_R"].mean(),
-                     "bankroll_x": float(np.exp(g["growth"].sum())),
+                     "capital_x": float(np.exp(g["growth"].sum())),
                      "gain_lo": float(np.exp(np.percentile(boot, 2.5))),
                      "gain_hi": float(np.exp(np.percentile(boot, 97.5))),
                      "slates_better": int((diff > 1e-12).sum()),
                      "slates_worse": int((diff < -1e-12).sum())})
-    return pd.DataFrame(rows).sort_values("bankroll_x", ascending=False).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values("capital_x", ascending=False).reset_index(drop=True)
 
 
 
@@ -1095,9 +1098,9 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
 
     Returns ``{"frontier": DataFrame, "pick": Series, "info": dict}``. The frontier
     frame carries each portfolio's promised return (`pct_expected_return`), its
-    realised return per unit staked (`realised_R`), how many legs it holds and
+    realised return per unit allocated (`realised_R`), how many legs it holds and
     how many of its matches it holds as a pair or a triple. The pick is the 06
-    rule's choice, staked at `growth.suggested_fraction`.
+    rule's choice, sized at `growth.suggested_fraction`.
     """
     from . import portfolio as pf
     from .growth import growth_metrics, suggested_fraction
@@ -1176,7 +1179,7 @@ def triples_backtest(slates=AS_RUN_SLATES, *, workers: int = 4, cache: Path | st
                      refresh: bool = False) -> pd.DataFrame:
     """Every slate through the builder twice, triples off and on, settled.
 
-    One row per slate x setting: the 06 pick (legs, promised, delivered, stake,
+    One row per slate x setting: the 06 pick (legs, promised, delivered, size,
     growth) and the whole frontier (median promised and delivered, share
     profitable). ~25 minutes on 4 cores, so cached like `portfolio_backtest`.
     """
@@ -1214,8 +1217,8 @@ def triples_summary(tb: pd.DataFrame, n_boot: int = 5000, seed: int = 2026) -> p
     d = (out["growth_on"] - out["growth_off"]).to_numpy()
     rng = np.random.default_rng(seed)
     boot = d[rng.integers(0, len(d), size=(n_boot, len(d)))].sum(axis=1)
-    out.attrs.update(bankroll_off=float(np.exp(out["growth_off"].sum())),
-                     bankroll_on=float(np.exp(out["growth_on"].sum())),
+    out.attrs.update(capital_off=float(np.exp(out["growth_off"].sum())),
+                     capital_on=float(np.exp(out["growth_on"].sum())),
                      gain=float(np.exp(d.sum())),
                      gain_lo=float(np.exp(np.percentile(boot, 2.5))),
                      gain_hi=float(np.exp(np.percentile(boot, 97.5))),
@@ -1266,7 +1269,7 @@ def _leg_cap_job(args) -> dict:
 
 def leg_cap_backtest(slates=AS_RUN_SLATES, caps=LEG_CAPS, *, workers: int = 4,
                      cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
-    """Every undominated portfolio on every slate, restaked under each per-leg cap and settled.
+    """Every undominated portfolio on every slate, re-weighted under each per-leg cap and settled.
 
     The growth split is computed uncapped, then `portfolio.cap_stakes` applies
     each cap (with the usual `CAP_RELIEF` for short rows). The legs are held
@@ -1307,7 +1310,7 @@ def _cap_replay_job(args) -> dict:
 
 def leg_cap_replay(slates=AS_RUN_SLATES, caps=(0.15, 0.10), *, workers: int = 4,
                    cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
-    """Every slate searched, picked and staked under each per-leg cap, then settled.
+    """Every slate searched, picked and sized under each per-leg cap, then settled.
 
     Unlike `leg_cap_backtest`, the cap is in force *during* the search, so
     dominance and the 06 pick respond to it -- the test that decides whether to
@@ -1330,7 +1333,7 @@ def leg_cap_replay(slates=AS_RUN_SLATES, caps=(0.15, 0.10), *, workers: int = 4,
 
 def leg_cap_summary(cr: pd.DataFrame, baseline: float = 0.15, n_boot: int = 5000,
                     seed: int = 2026) -> pd.DataFrame:
-    """Per cap: the pick's bankroll and its gain over `baseline`, and the frontier's averages."""
+    """Per cap: the pick's capital multiple and its gain over `baseline`, and the frontier's averages."""
     piv = cr.pivot(index="slate", columns="cap", values="pick_growth")
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(piv), size=(n_boot, len(piv)))
@@ -1339,7 +1342,7 @@ def leg_cap_summary(cr: pd.DataFrame, baseline: float = 0.15, n_boot: int = 5000
         g = cr[cr["cap"] == cap]
         d = (piv[cap] - piv[baseline]).to_numpy()
         boot = d[idx].sum(axis=1)
-        rows.append({"cap": cap, "pick_bankroll_x": float(np.exp(piv[cap].sum())),
+        rows.append({"cap": cap, "pick_capital_x": float(np.exp(piv[cap].sum())),
                      "gain_vs_baseline": float(np.exp(d.sum())),
                      "gain_lo": float(np.exp(np.percentile(boot, 2.5))),
                      "gain_hi": float(np.exp(np.percentile(boot, 97.5))),

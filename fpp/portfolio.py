@@ -415,7 +415,7 @@ def pair_rho(a: pd.Series, b: pd.Series) -> float:
 
     Graded by what they share, from `config.PAIR_CORRELATION`. Same team and same
     stat is graded again by how far apart the two lines are, because adjacent
-    lines are nearly the same bet (0.60) and three or more apart much less so
+    lines are nearly the same position (0.60) and three or more apart much less so
     (0.23).
     """
     if a["team"] != b["team"]:
