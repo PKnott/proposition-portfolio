@@ -1483,7 +1483,8 @@ def _thin(picks: np.ndarray, opts: Options, terms: list[dict], pool_max: int,
 
 
 def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
-               grid: int = GRID, splits: tuple[str, ...] = SPLITS) -> pd.DataFrame:
+               grid: int = GRID, splits: tuple[str, ...] = SPLITS,
+               max_leg_stake: float = MAX_LEG_STAKE) -> pd.DataFrame:
     """One row per (portfolio, split), with every reported quantity on it.
 
     Percentages throughout: every stake is a fixed fraction of the total, so the
@@ -1504,7 +1505,7 @@ def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
     terms = [option_terms(opts, j) for j in range(opts.n_events)]
     capacity = _sum_terms(picks, opts, terms)["c"]
     for split in splits:
-        stakes, p, o, rho = stakes_for(picks, opts, split)
+        stakes, p, o, rho = stakes_for(picks, opts, split, max_leg_stake)
         er, var = metrics(stakes, p, o, rho)
         th = threshold_probs_batch(stakes * o, p, thresholds, grid, rho=rho)
         # (mu/sigma)**2 against the best achievable, sqrt(C). Guarded because a
@@ -1540,7 +1541,7 @@ def score_pool(picks: np.ndarray, opts: Options, *, thresholds=THRESHOLDS,
             # answer different questions, and a short row can lose little capacity
             # while having every leg dictated -- which is the case worth flagging.
             "legs_at_cap": (
-                (stakes >= row_cap((p > 0).sum(axis=1))[:, None] - 1e-12) & (p > 0)
+                (stakes >= row_cap((p > 0).sum(axis=1), max_leg_stake)[:, None] - 1e-12) & (p > 0)
             ).sum(axis=1),
             "n_eff": _effective_legs(stakes, p, o),
             "median_leg_p": np.nanmedian(leg_p, axis=1),
@@ -1795,7 +1796,7 @@ def picks_label(picks_row: np.ndarray, opts: Options) -> str:
 def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
            leg_var: int | None = None, max_legs: int | None = None,
            thresholds=THRESHOLDS, grid: int = GRID, triples: bool = TRIPLES_ENABLED,
-           **pool_kwargs) -> dict:
+           max_leg_stake: float = MAX_LEG_STAKE, **pool_kwargs) -> dict:
     """Filled odds form -> everything the workbook and the notebook need.
 
     ``leg_var=k`` allows portfolios that leave out up to ``k`` of the qualifying
@@ -1821,7 +1822,8 @@ def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
         return {"qualified": qualified, "options": opts, "picks": picks,
                 "info": info, "scored": pd.DataFrame(), "undominated": np.zeros(0, bool)}
 
-    scored = score_pool(picks, opts, thresholds=thresholds, grid=grid)
+    scored = score_pool(picks, opts, thresholds=thresholds, grid=grid,
+                        max_leg_stake=max_leg_stake)
     scored["undominated"] = undominated_portfolios(scored)
     scored["picks"] = [picks_label(picks[c], opts) for c in scored["combo"]]
     scored = scored.sort_values(

@@ -181,3 +181,24 @@ def test_triples_survive_the_edge_book_payload_and_ledger_capture(tmp_path):
     fixture = legs["prop_key"].str.rsplit("|", n=3).str[0]
     assert legs.assign(fixture=fixture).groupby(["portfolio_id", "fixture"]).size().max() == 3
     np.testing.assert_allclose(legs.groupby("portfolio_id")["stake_frac"].sum(), 1.0, atol=1e-4)
+
+
+def test_replay_slate_maps_legs_to_outcomes_at_width_three():
+    from fpp import study as st
+
+    f = _triple_slate()
+    rows = f.rename(columns={"date": "fixture_date"}).assign(
+        o=[2.6, 2.1, 1.8, 2.3] * 2, y=[1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+        target=lambda d: d["label"].str.split(" - ").str[0].str.lower(),
+        event=lambda d: d["sheet_code"])
+    # Pick the largest portfolio, so the pick holds triples.
+    out = st.replay_slate(rows, rows["p"].to_numpy(), {"none": np.zeros(len(rows))},
+                          leg_var=0, grid=512, pick_rule={"sort_by": "legs"})[0]
+    assert out["triples"] >= 1
+    # Settle it again by hand from the legs `portfolio.legs` lists: same R.
+    res = pf.search(st._filled(rows, rows["p"].to_numpy()), leg_var=0, grid=512, triples=True)
+    sc = res["scored"]
+    best = sc[sc["undominated"]].sort_values("legs", ascending=False).iloc[0]
+    legs = pf.legs(res["picks"], res["options"], int(best["combo"]), best["split"])
+    won = dict(zip(rows["label"], rows["y"]))
+    assert out["R"] == pytest.approx(float((legs["stake"] * legs["o"] * legs["label"].map(won)).sum()))

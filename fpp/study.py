@@ -851,6 +851,12 @@ def backtest_summary(per_slate: pd.DataFrame, baseline: str = "k=0 push only",
 # deliberate: learning them through the builder would need a full search per
 # training slate per fold.
 
+# The slates as they were actually run, one per matchday: R018 is dropped
+# because R019 re-ran the same 28 matches. Nothing is deduplicated, so each
+# replayed slate is exactly the card that was priced.
+AS_RUN_SLATES: tuple[str, ...] = ("R006", "R007", "R010", "R011", "R012", "R013", "R015",
+                                  "R016", "R017", "R019", "R020", "R021", "R022")
+
 PICK_RULE = dict(min_pct_expected_return=1.05, min_p_over_100=0.70, max_pct_sd=0.25,
                  sort_by="p_over_100")
 LEG_VAR = 11
@@ -921,7 +927,7 @@ def replay_slate(rows: pd.DataFrame, p_select: np.ndarray, biases: dict[str, np.
             continue
         for slot, prop in enumerate(opts.members[j][k]):
             src = opts.props[(opts.props["event"] == j) & (opts.props["option"] == prop)]
-            rid[2 * j + slot] = int(src["_rid"].iloc[0])
+            rid[opts.width * j + slot] = int(src["_rid"].iloc[0])
     live = rid >= 0
     y = np.zeros(stakes.shape[1])
     y[live] = rows["y"].to_numpy()[rid[live]]
@@ -941,23 +947,32 @@ def replay_slate(rows: pd.DataFrame, p_select: np.ndarray, biases: dict[str, np.
                     "growth": float(np.log1p(f * (R - 1.0))),
                     "expected_R": float((pay * prob[0]).sum()),
                     "shots_legs": int((targets == "shots").sum()),
-                    "pairs": int((rho[0] != 0).sum() + ((prob[0][1::2] > 0) & (rho[0] == 0)).sum()),
+                    # Matches holding two legs, and three: counted off the slot
+                    # layout so it holds at either width.
+                    "pairs": int(((prob[0].reshape(-1, opts.width) > 0).sum(axis=1) == 2).sum()),
+                    "triples": int(((prob[0].reshape(-1, opts.width) > 0).sum(axis=1) == 3).sum()),
                     "f_drawdown": float(gm["f_drawdown"])})
     return out
 
 
-def _fold_plan(s: pd.DataFrame, held: str, *, shots_k: float = 1.0, all_k: float = 0.5,
-               group: str = "run_code") -> dict:
-    """Push and deflation for one held-out slate, learnt on the others only.
+def _fold_plan(train: pd.DataFrame, test: pd.DataFrame, *, shots_k: float = 1.0,
+               all_k: float = 0.5, group: str = "run_code") -> dict:
+    """Push and deflation for one held-out slate, learnt on `train` only.
+
+    `test` is the held-out slate as it was run; `train` is every other slate's
+    deduplicated rows with the held-out slate's matches removed, so a match
+    re-priced on two overlapping runs can never sit on both sides.
 
     Returns, per *variant* (the probability the builder selects on), that
     probability for the held-out rows and the per-row deflation of each strategy
     using it.
     """
+    s = pd.concat([train.assign(_te=False), test.assign(_te=True)], ignore_index=True)
     groups = s[group].astype(str).to_numpy()
     y, p = s["y"].to_numpy(), s["p"].to_numpy()
     shots = (s["target"] == "shots").to_numpy()
-    tr, te = groups != held, groups == held
+    te = s["_te"].to_numpy()
+    tr = ~te
 
     def oos_push(mask_fit, k):
         """Out-of-sample pushed p for every training row (inner leave-one-slate-out)."""
@@ -1006,28 +1021,34 @@ def _replay_task(args):
     return out
 
 
-def portfolio_backtest(s: pd.DataFrame, *, workers: int = 4, cache: Path | str | None = None,
+def portfolio_backtest(s: pd.DataFrame, *, slates=AS_RUN_SLATES, as_run: pd.DataFrame | None = None,
+                       workers: int = 4, cache: Path | str | None = None,
                        refresh: bool = False, group: str = "run_code") -> pd.DataFrame:
     """Every held-out slate through the real builder, under each strategy.
 
-    Slow -- one full `portfolio.search` per slate per variant -- so it runs in
-    `workers` processes and is cached. A cache is reused only if it covers the
-    same slates; pass `refresh=True` to recompute regardless.
+    Each slate is replayed **as it was run** (`as_run`, default
+    `load_study_set(dedupe=False)`), the card that was actually priced; the push
+    and deflation are learnt on `s`, the deduplicated set, minus that slate's
+    matches. Slow -- one full `portfolio.search` per slate per variant -- so it
+    runs in `workers` processes and is cached. A cache is reused only if it
+    covers the same slates; pass `refresh=True` to recompute regardless.
     """
     from concurrent.futures import ProcessPoolExecutor
 
-    slates = sorted(s[group].astype(str).unique(), key=_run_number)
+    slates = sorted(slates, key=_run_number)
     path = Path(cache) if cache else None
     if path is not None and path.exists() and not refresh:
         cached = pd.read_parquet(path)
         if sorted(cached["slate"].unique(), key=_run_number) == slates:
             return cached
 
+    raw = load_study_set(dedupe=False)[0] if as_run is None else as_run
     tasks, deflations = [], []
     for held in slates:
-        plan = _fold_plan(s, held, group=group)
+        rows = raw[raw[group].astype(str) == held].reset_index(drop=True)
+        train = s[(s[group].astype(str) != held) & ~s["event"].isin(rows["event"])]
+        plan = _fold_plan(train, rows, group=group)
         deflations.append({"slate": held, **plan.pop("_deflation")})
-        rows = s[s[group].astype(str) == held].reset_index(drop=True)
         for variant, (p_sel, biases) in plan.items():
             tasks.append((rows, p_sel, biases, held, variant))
 
@@ -1068,7 +1089,8 @@ def portfolio_summary(bt: pd.DataFrame, baseline: str = "today", n_boot: int = 5
 
 
 def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_VAR,
-                      grid: int = REPLAY_GRID, pick_rule: dict | None = None) -> dict:
+                      grid: int = REPLAY_GRID, pick_rule: dict | None = None,
+                      max_leg_stake: float | None = None) -> dict:
     """One slate through `portfolio.search`, with every undominated portfolio settled.
 
     Returns ``{"frontier": DataFrame, "pick": Series, "info": dict}``. The frontier
@@ -1080,9 +1102,12 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     from . import portfolio as pf
     from .growth import growth_metrics, suggested_fraction
 
+    from .config import MAX_LEG_STAKE
+
     rule = PICK_RULE if pick_rule is None else pick_rule
+    cap = MAX_LEG_STAKE if max_leg_stake is None else max_leg_stake
     res = pf.search(_filled(rows, rows["p"].to_numpy()), leg_var=leg_var, grid=grid,
-                    triples=triples)
+                    triples=triples, max_leg_stake=cap)
     scored, opts, picks = res["scored"], res["options"], res["picks"]
     front = scored[scored["undominated"]].copy()
     W = opts.width
@@ -1092,7 +1117,7 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     rid_of = {(int(e), int(o)): int(r) for e, o, r in
               zip(opts.props["event"], opts.props["option"], opts.props["_rid"])}
     combos = front["combo"].to_numpy()
-    stakes, prob, odds, rho = pf.stakes_for(picks[combos], opts, front["split"].iloc[0])
+    stakes, prob, odds, rho = pf.stakes_for(picks[combos], opts, front["split"].iloc[0], cap)
     Y = np.zeros_like(prob)
     multi = np.zeros(len(combos), int)
     tri = np.zeros(len(combos), int)
@@ -1127,11 +1152,6 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
 
 # --- 7. triples on and off, through the builder ---------------------------
 
-# The slates as they were actually run, one per matchday: R018 is dropped
-# because R019 re-ran the same 28 matches. Unlike `portfolio_backtest`, nothing
-# is deduplicated, so each slate is exactly the card that was priced.
-AS_RUN_SLATES: tuple[str, ...] = ("R006", "R007", "R010", "R011", "R012", "R013", "R015",
-                                  "R016", "R017", "R019", "R020", "R021", "R022")
 
 
 def _triples_job(args) -> dict:
@@ -1270,6 +1290,66 @@ def leg_cap_backtest(slates=AS_RUN_SLATES, caps=LEG_CAPS, *, workers: int = 4,
     return out
 
 
+
+def _cap_replay_job(args) -> dict:
+    run, cap = args
+    s, _ = load_study_set(dedupe=False)
+    rows = s[s["run_code"] == run].reset_index(drop=True)
+    out = frontier_outcomes(rows, triples=True, max_leg_stake=cap)
+    f, pk = out["frontier"], out["pick"]
+    return {"slate": run, "cap": cap, "frontier": len(f),
+            "front_R_mean": float(f["realised_R"].mean()),
+            "front_E_mean": float(f["pct_expected_return"].mean()),
+            "front_profitable": float((f["realised_R"] > 1).mean()),
+            **{f"pick_{k}": pk[k] for k in ("legs", "pct_expected_return", "p_over_100",
+                                            "realised_R", "f", "growth", "max_leg_stake")}}
+
+
+def leg_cap_replay(slates=AS_RUN_SLATES, caps=(0.15, 0.10), *, workers: int = 4,
+                   cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
+    """Every slate searched, picked and staked under each per-leg cap, then settled.
+
+    Unlike `leg_cap_backtest`, the cap is in force *during* the search, so
+    dominance and the 06 pick respond to it -- the test that decides whether to
+    change `MAX_LEG_STAKE`. Triples on. Cached; ~35 minutes fresh.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    path = Path(cache) if cache else None
+    if path is not None and path.exists() and not refresh:
+        cached = pd.read_parquet(path)
+        if sorted(cached["slate"].unique()) == sorted(slates):
+            return cached
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        out = pd.DataFrame(list(ex.map(_cap_replay_job, [(r, c) for r in slates for c in caps])))
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_parquet(path, index=False)
+    return out
+
+
+def leg_cap_summary(cr: pd.DataFrame, baseline: float = 0.15, n_boot: int = 5000,
+                    seed: int = 2026) -> pd.DataFrame:
+    """Per cap: the pick's bankroll and its gain over `baseline`, and the frontier's averages."""
+    piv = cr.pivot(index="slate", columns="cap", values="pick_growth")
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(piv), size=(n_boot, len(piv)))
+    rows = []
+    for cap in sorted(piv.columns, reverse=True):
+        g = cr[cr["cap"] == cap]
+        d = (piv[cap] - piv[baseline]).to_numpy()
+        boot = d[idx].sum(axis=1)
+        rows.append({"cap": cap, "pick_bankroll_x": float(np.exp(piv[cap].sum())),
+                     "gain_vs_baseline": float(np.exp(d.sum())),
+                     "gain_lo": float(np.exp(np.percentile(boot, 2.5))),
+                     "gain_hi": float(np.exp(np.percentile(boot, 97.5))),
+                     "slates_better": int((d > 1e-9).sum()), "slates_worse": int((d < -1e-9).sum()),
+                     "frontier_delivered": g["front_R_mean"].mean(),
+                     "frontier_promised": g["front_E_mean"].mean(),
+                     "frontier_profitable": g["front_profitable"].mean()})
+    return pd.DataFrame(rows)
+
+
 __all__ = [
     "load_study_set", "run_models", "grade", "pair_frame", "rho_table", "placebo_correlation",
     "correlation_vs_config", "reliability_frame", "gap_table", "market_comparison",
@@ -1279,5 +1359,5 @@ __all__ = [
     "push", "select", "kelly_stakes", "slate_growth", "SLATE_CAP",
     "replay_slate", "portfolio_backtest", "portfolio_summary", "frontier_outcomes",
     "AS_RUN_SLATES", "triples_backtest", "triples_summary", "LEG_CAPS",
-    "leg_cap_backtest", "push_deflate_backtest", "backtest_summary",
+    "leg_cap_backtest", "leg_cap_replay", "leg_cap_summary", "push_deflate_backtest", "backtest_summary",
 ]
