@@ -244,7 +244,7 @@ def test_the_leg_cap_binds_without_ever_losing_stake():
 
     Six legs cannot each hold under 15%, so the cap relaxes per row to
     `CAP_RELIEF` times equal weight. Clipping to an unreachable limit instead
-    would leave the row staking less than the whole amount -- a different bet from
+    would leave the row staking less than the whole amount -- a different position from
     the one scored.
     """
     rng = np.random.default_rng(31)
@@ -562,11 +562,11 @@ def test_search_end_to_end():
     assert s["undominated"].tolist() == sorted(s["undominated"].tolist(), reverse=True)
 
     top = s.iloc[0]
-    bets = pf.legs(res["picks"], res["options"], int(top["combo"]), top["split"], total=100.0)
-    assert len(bets) == top["legs"]
-    assert bets["stake"].sum() == pytest.approx(100.0)
-    assert bets["event"].is_unique
-    assert (bets["e"] >= 1.0).all()
+    held = pf.legs(res["picks"], res["options"], int(top["combo"]), top["split"], total=100.0)
+    assert len(held) == top["legs"]
+    assert held["stake"].sum() == pytest.approx(100.0)
+    assert held["event"].is_unique
+    assert (held["e"] >= 1.0).all()
 
 
 def test_search_on_a_form_where_nothing_qualifies():
@@ -607,7 +607,7 @@ def test_leg_var_resolves_against_the_events_that_actually_qualify():
     rng = np.random.default_rng(4)
     opts = _random_options(rng, 9)
     assert opts.n_events == 9
-    assert opts.min_legs_for(0) == 9        # one bet from every event
+    assert opts.min_legs_for(0) == 9        # one position from every event
     assert opts.min_legs_for(3) == 6
     # an over-large leg_var opens the search rather than asking for no legs
     assert opts.min_legs_for(9) == 1

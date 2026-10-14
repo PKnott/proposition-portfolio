@@ -35,7 +35,7 @@ def _normalish(mean: float, sd: float, n: int = 400) -> tuple[np.ndarray, np.nda
 
 
 def _legs(p: np.ndarray, o: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """``(pay, p)`` for one portfolio, staked 1/E and normalised to a unit bankroll."""
+    """``(pay, p)`` for one portfolio, staked 1/E and normalised to unit capital."""
     s = 1.0 / (p * o)
     s = s / s.sum()
     return (s * o)[None, :], p[None, :]

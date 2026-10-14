@@ -91,7 +91,7 @@
 
   /* How a portfolio is named outside this page. Ids restart at 1 on every run,
      so `770` identifies a portfolio only within the file you are looking at;
-     `R007-770` is what `fpp.ledger.record_bet` takes. Older payloads carry no
+     `R007-770` is what `fpp.ledger.record_position` takes. Older payloads carry no
      run code and fall back to the bare id rather than inventing one. */
   const RUN_CODE = BOOK.run_code || null;
   const refOf = pf => RUN_CODE ? `${RUN_CODE}-${pf.id}` : String(pf.id);
@@ -169,7 +169,7 @@
     open: null,                 // expanded portfolio id
     expanded: new Set(),        // which fixtures show their individual propositions
     // Projection Book. `pot` is deliberately *not* `stake`: the Portfolio Book's
-    // stake is what goes on this portfolio once, and the pot is the bankroll a
+    // stake is what goes on this portfolio once, and the pot is the capital a
     // stake fraction is taken out of every round. `stake = f * pot`, so calling
     // them one number would make the two pages quietly contradict each other.
     project: null,              // portfolio id being projected
@@ -179,7 +179,7 @@
     // one. The *tolerance* is stored and the stake derived from it, because the
     // nine stakes are per portfolio -- see `ddStake`.
     ddKey: null,
-    stakeMode: 'suggested',     // which of the two the betting slip prices at
+    stakeMode: 'suggested',     // which of the two the order ticket prices at
     rounds: 52,
     target: null,
   };
@@ -299,7 +299,7 @@
     // A tolerance in the hash is a tolerance the page is priced at. Written that
     // way too -- `dd` is only ever emitted alongside the mode that reads it -- but
     // a link somebody edited by hand must not light a cell in the grid while the
-    // slip quietly prices the published stake.
+    // ticket quietly prices the published stake.
     if (state.ddKey) state.stakeMode = 'custom';
     restoring = false;
   }
@@ -810,7 +810,7 @@
   /** This portfolio's stake at the chosen tolerance.
    *
    *  Rounded to the whole percent every other stake on this page is shown, read
-   *  off the curve and priced at -- so the cell, the box, the marker and the slip
+   *  off the curve and priced at -- so the cell, the box, the marker and the ticket
    *  are one number rather than four roundings of it. The grid is per portfolio,
    *  so this is derived at render rather than stored: the tolerance is what the
    *  reader chose, and it means a different stake on the next portfolio. */
@@ -828,7 +828,7 @@
       label: 'suggested', cls: 'r-prot' },
   ];
 
-  /* The betting slip prices at one of two fractions of the pot. The first is the
+  /* The order ticket prices at one of two fractions of the pot. The first is the
      model's own answer and carries the palette it carries everywhere else on this
      page; the second is plain ink because it is a choice, not an answer.
      `custom` reads `state.customF` -- the same fraction the curve marks as
@@ -854,7 +854,7 @@
 
   /* House order, consulted only to settle a tie the minimum has already left
      open. The spellings are the display names `staking.BOOKS` writes into the
-     payload -- '10bet' and 'BoyleSports', not '10Bet' or 'Boyle Sports'.
+     payload, character for character -- a near-miss spelling never matches.
 
      There was briefly an exchange at the head of this list that outranked the
      fewest-accounts rule outright. If one returns to `staking.BOOKS` that
@@ -872,17 +872,17 @@
     return false;
   };
 
-  /** One bookmaker per leg, chosen to open the fewest accounts.
+  /** One price source per leg, chosen to open the fewest accounts.
    *
    *  `staking.best_price` names *every* book that matched the top price rather
-   *  than picking one, so a leg reading 'BetMGM / Bet365' is a free choice and
+   *  than picking one, so a leg reading 'Source A / Source B' is a free choice and
    *  this is where it gets made. Minimum accounts decides first and
    *  `BOOK_ORDER` only breaks what is left -- a preference that cost an extra
    *  account would be the preference deciding, which is not what it is for.
    *
    *  What this deliberately cannot do: the payload carries the best price and
    *  who matched it, not the ladder behind it, so no leg is ever moved to a
-   *  worse price to save an account. Every price on the slip is still the best
+   *  worse price to save an account. Every price on the ticket is still the best
    *  price that leg was quoted.
    */
   function chooseBooks(legs) {
@@ -1203,7 +1203,7 @@
    *  the neighbours cannot tell a recommendation from a house rule. Stakes only
    *  -- growth is readable off `g_curve` at whole-percent resolution, and a
    *  read-off printed beside an exact stake invites a comparison finer than the
-   *  data behind it. Pick a cell and the curve, calculator and slip follow. */
+   *  data behind it. Pick a cell and the curve, calculator and ticket follow. */
   function ddPanel(pf) {
     const cells = pf.growth && pf.growth.drawdown_grid;
     if (!cells) return `<p class="hint">This portfolio carries no tolerance grid.</p>`;
@@ -1240,7 +1240,7 @@
    *  the top of the page rather than off the Portfolio Book's stake --
    *  `stake = f * pot`, the identity the state comment sets out.
    */
-  function slipPanel(pf) {
+  function ticketPanel(pf) {
     const mode = stakeMode();
     const f = modeF(pf);
     const legs = pf.picks.map((id, k) =>
@@ -1249,7 +1249,7 @@
 
     /* Rounded to the penny *before* anything is added up. Summing the exact
        fractions and then rounding gives a total that is a penny or two off the
-       rows printed above it, and a slip whose column does not add up is a slip
+       rows printed above it, and a ticket whose column does not add up is a ticket
        you have to check by hand. */
     const p2 = v => Math.round(v * 100) / 100;
     const cashOf = st => (st == null || f == null ? null : p2(st * f * state.pot));
@@ -1259,7 +1259,7 @@
        whatever order the search happened to pick the legs in -- which reads
        fine as a list and is miserable at the counter, because it sends you
        back to a book you have already left. Blocks come in `BOOK_ORDER`, so the
-       slip is filled in the same order every day. */
+       ticket is filled in the same order every day. */
     const placed = legs.map(({ prop, stake }, k) => ({
       prop, stake, k,
       book: books.get(k) || null,
@@ -1300,25 +1300,25 @@
     const priced = accounts.reduce((n, [, v]) => n + v.n, 0);
 
     // `legsPanel` guards `pf.stakes` because a portfolio predating the field has
-    // none, and a slip that cannot price its legs should say so rather than
+    // none, and a ticket that cannot price its legs should say so rather than
     // announce a confident total of nothing.
     const head = f == null || !accounts.length
       ? `<p class="hint">${f == null && mode.key === 'custom' && state.ddKey
           ? `This portfolio has no stake at ${esc(ddSentence(state.ddKey))}.`
           : f == null && mode.key === 'custom'
-          ? 'Type a stake % above to price this slip.'
+          ? 'Type a stake % above to price this ticket.'
           : f == null ? `This portfolio has no ${esc(mode.label.toLowerCase())} stake.`
           : 'This portfolio carries no stake split, so its legs cannot be priced.'}</p>`
-      : `<p class="slip-head"><strong class="${mode.cls}">${esc(modeLabel(mode))}</strong> ·
+      : `<p class="ticket-head"><strong class="${mode.cls}">${esc(modeLabel(mode))}</strong> ·
          ${state.ddKey && mode.key === 'custom' ? esc(ddSentence(state.ddKey)) + ' · ' : ''}
          ${pct(f, 0)} of ${cash(state.pot)} · <strong class="cash">${money(total)}</strong>
          across ${accounts.length} ${accounts.length === 1 ? 'account' : 'accounts'}
-         ${RUN_CODE ? `<span class="slip-ref" title="what the ledger calls this portfolio"
+         ${RUN_CODE ? `<span class="ticket-ref" title="what the ledger calls this portfolio"
            >${esc(refOf(pf))}</span>` : ''}</p>`;
 
     /* The leg cap is a constraint on the split, and where it binds every leg it
        has replaced the split rather than trimmed it: the stakes below are the
-       cap's, not the growth weights'. Said here because the slip is the only
+       cap's, not the growth weights'. Said here because the ticket is the only
        place the stakes are read as instructions. */
     const capped = pf.legs_at_cap || 0;
     const capNote = !accounts.length || !capped ? '' : `
@@ -1332,7 +1332,7 @@
           : ''}</p>`;
 
     const acct = !accounts.length ? '' : `
-      <div class="slip-sub">What to have where</div>
+      <div class="ticket-sub">What to have where</div>
       <table class="accounts"><tbody>${accounts.map(([b, v]) => `
         <tr><td class="bk">${esc(b)}</td>
           <td>${v.n} ${v.n === 1 ? 'leg' : 'legs'}</td>
@@ -1341,12 +1341,12 @@
           <td class="cash">${money(total)}</td></tr>
       </tbody></table>`;
 
-    return head + `<table class="slip"><thead><tr>
+    return head + `<table class="ticket"><thead><tr>
         <th>selection</th><th>edge</th><th>odds</th><th>book</th><th>stake</th>
       </tr></thead><tbody>${rows}</tbody></table>${capNote}${acct}
       <p class="caveat">Grouped by account, then by match, in the order it is placed.
       Books are picked to open the <strong>fewest accounts</strong>, never to give up a price:
-      a leg quoted the same at two books goes to whichever one the slip already needs. Legs are
+      a leg quoted the same at two books goes to whichever one the ticket already needs. Legs are
       rounded to the penny before anything is added up, so every total is the sum of the rows
       above it.</p>`;
   }
@@ -1402,7 +1402,7 @@
     set('in-n', state.rounds);
     set('in-target', state.target == null ? '' : state.target);
     set('in-f', state.customF == null ? '' : Math.round(state.customF * 100));
-    set('in-slip-f', state.customF == null ? '' : Math.round(state.customF * 100));
+    set('in-ticket-f', state.customF == null ? '' : Math.round(state.customF * 100));
     const g = state.customF == null ? null : gAt(pr, Math.round(state.customF * 100) / 100);
     set('in-g', g == null ? '' : (g * 100).toFixed(2));
     // Buttons hold no caret, so unlike the boxes above they are safe to write
@@ -1447,7 +1447,7 @@
     el('proj-fan').innerHTML = fanPanel(pf, pr);
     el('proj-curve').innerHTML = curvePanel(pf, pr);
     el('proj-calc').innerHTML = calcPanel(pf, pr);
-    el('proj-slip').innerHTML = slipPanel(pf);
+    el('proj-ticket').innerHTML = ticketPanel(pf);
     el('proj-stats').innerHTML = statsPanel(pf, pr);
     syncInputs(pf, pr);
   }
@@ -1713,7 +1713,7 @@
     if (!b) return;
     state.stakeMode = b.dataset.mode;
     // Back to the published stake means back to the published tolerance: leaving
-    // a cell selected would light it in the grid while the slip priced something
+    // a cell selected would light it in the grid while the ticket priced something
     // else.
     if (state.stakeMode !== 'custom' && state.ddKey) {
       state.ddKey = null;
@@ -1728,11 +1728,11 @@
     }
     projChanged();
   });
-  // The slip's own stake box. It is the same `state.customF` the curve reads, so
+  // The ticket's own stake box. It is the same `state.customF` the curve reads, so
   // typing here moves the curve's `yours` marker and adds the calculator's row --
   // but unlike `in-f`, whose job is reading the curve, this box exists only to
-  // price the slip, so using it switches the slip to Custom.
-  el('in-slip-f').addEventListener('input', e => {
+  // price the ticket, so using it switches the ticket to Custom.
+  el('in-ticket-f').addEventListener('input', e => {
     const v = Number(e.target.value);
     state.customF = v >= 1 && v <= 99 ? Math.round(v) / 100 : null;
     state.ddKey = null;

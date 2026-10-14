@@ -328,7 +328,7 @@ TARGET_SHRINK: dict[str, float] = {"goals": 0.0, "shots": 0.0, "sot": 0.0, "corn
 
 # --- Growth-optimal staking (`fpp.growth`) --------------------------------
 #
-# How much of a bankroll to commit to one portfolio, repeated round after round.
+# How much capital to commit to one portfolio, repeated round after round.
 # A different question from either existing one: `staking` splits stake *within*
 # a portfolio and `portfolio` chooses which propositions go together; neither
 # asks what fraction of the pot the whole portfolio should get.
@@ -346,7 +346,7 @@ GROWTH_F_FINE = 0.01
 # below `GROWTH_DRAWDOWN_P`. A risk-tolerance choice, not an engineering one, and
 # a live dial rather than a hardcode so it can be revisited without a redeploy.
 #
-# 30% rather than 50%: median f* on real data is 0.96 of bankroll, so the
+# 30% rather than 50%: median f* on real data is 0.96 of capital, so the
 # unconstrained optimum is not usable and the constraint is what makes the number
 # actionable. Full-Kelly is growth-optimal in the limit and brutal on the way.
 GROWTH_DRAWDOWN_D = 0.30
@@ -569,7 +569,7 @@ STUDY_FIRST_RUN = "R006"
 # -0.185. Its same-stat values held; the other two did not.
 #
 # Same team and same stat is graded by how far apart the two lines are, because
-# adjacent lines are nearly the same bet and distant ones much less so.
+# adjacent lines are nearly the same position and distant ones much less so.
 #
 # `same_team_diff_stat` is one number over real structure. Across all priced
 # propositions: shots x SOT 0.30, goals x SOT 0.24, shots x corners 0.19,

@@ -308,7 +308,7 @@ class Options:
 
     codes: tuple[str, ...]              # sheet_code per event, in search order
     p: tuple[np.ndarray, ...]           # model probability, first slot
-    o: tuple[np.ndarray, ...]           # best bookmaker price, first slot
+    o: tuple[np.ndarray, ...]           # best market price, first slot
     props: pd.DataFrame                 # the source rows, with `event` and `option`
     p2: tuple[np.ndarray, ...] = ()     # second slot, 0 where the option is single
     o2: tuple[np.ndarray, ...] = ()
@@ -636,7 +636,7 @@ def pair_terms(p1: np.ndarray, o1: np.ndarray, p2: np.ndarray, o2: np.ndarray,
     overstakes by the same margin.
 
     A pair whose solve wants a negative weight is rejected by returning zero
-    capacity: that is a hedge requiring a lay, and a lay is not a bet available
+    capacity: that is a hedge requiring a lay, and a lay is not a position available
     here. The caller drops those rather than offering them.
     """
     pc1 = np.clip(p1, P_CLAMP, 1.0 - P_CLAMP)
@@ -875,7 +875,7 @@ def cap_stakes(stakes: np.ndarray, active: np.ndarray,
     1.0. Six legs cannot each hold under 15% -- the stake has to go somewhere -- so
     for short portfolios the cap has to relax. Clipping to an unreachable limit
     instead would silently leave the row staking less than the whole amount, which is
-    a different bet from the one being scored.
+    a different position from the one being scored.
 
     ``relief`` is why the floor is not ``1 / n_legs``. That value is feasible and
     *uniquely* feasible: six legs capped at a sixth admits exactly one allocation,
@@ -1249,7 +1249,7 @@ def build_pool(opts: Options, *, min_legs: int | str | None = None,
         min_legs = opts.min_legs_for(leg_var)
     elif min_legs is None:
         min_legs = 1
-    # `"all"` means one bet from every event -- no skipping. Spelled as a word
+    # `"all"` means one position from every event -- no skipping. Spelled as a word
     # because the number it stands for is the count of events that survived
     # qualifying, which changes every week: hardcoding last week's 26 would
     # silently mean "at least 26 of this week's 31". `leg_var=0` says the same
@@ -1731,12 +1731,12 @@ def thin_export(scored: pd.DataFrame, export_max: int = EXPORT_MAX,
     return keep
 
 
-# --- Expanding a portfolio back into bets ----------------------------------
+# --- Expanding a portfolio back into positions -----------------------------
 
 
 def legs(picks: np.ndarray, opts: Options, combo: int, split: str,
          total: float = 1.0) -> pd.DataFrame:
-    """The actual bets for one portfolio: proposition, price, book, stake.
+    """The actual positions for one portfolio: proposition, price, book, stake.
 
     This is the step that turns a row of a results table into something you can
     go and place, so it carries `book` -- an edge you cannot find again is not
@@ -1800,7 +1800,7 @@ def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
     """Filled odds form -> everything the workbook and the notebook need.
 
     ``leg_var=k`` allows portfolios that leave out up to ``k`` of the qualifying
-    events, and is the setting the notebook drives. ``leg_var=0`` requires one bet
+    events, and is the setting the notebook drives. ``leg_var=0`` requires one position
     from every one of them -- no skipping -- which is the only setting whose answer
     is provable: the space collapses to ``prod(k_i)``, which enumerates, so every
     portfolio is scored rather than searched.

@@ -4,7 +4,7 @@ Four questions, in the order they are worth asking. Each is a pure function over
 the settled tables `fpp.ledger` holds, and each returns a frame `07_Analysis`
 writes out and displays.
 
-1. `model_vs_market` -- is the model better than the price it is betting into?
+1. `model_vs_market` -- is the model better than the market price it is trading against?
    Nothing below matters if it is not: no portfolio rule rescues probabilities
    that lose to `1/o`.
 2. `live_calibration` -- which markets and which lines can be trusted. Graded by
@@ -201,7 +201,7 @@ def _direction(bins: pd.DataFrame) -> dict:
     """Split a market's calibration error into the safe half and the costly half.
 
     Every proposition on this book is an **Over**, so the two directions are not
-    equivalent. Under-predicting means the bets win more often than the price you
+    equivalent. Under-predicting means the positions land more often than the price you
     took implies -- error in your favour. Over-predicting is the one that costs
     money. `ece` weights both the same and cannot tell them apart, which on the
     first real slate graded two markets AVOID on error that was entirely in the
@@ -227,7 +227,7 @@ def live_calibration(s: pd.DataFrame, *, pooled: bool = False
     """``(summary, bins)`` per target, graded by `fpp.calibration`.
 
     This is the first calibration number in the project that describes the lines
-    actually bet. `04_Evaluation` grades `spec`'s fixed ladders -- 0.5/1.5/2.5/3.5
+    actually hold. `04_Evaluation` grades `spec`'s fixed ladders -- 0.5/1.5/2.5/3.5
     for goals -- over a held-out season, but propositions are priced on dynamic
     eleven-line ladders centred on each team's own predicted rate, so no existing
     verdict covers `Shots - Hull - Over 9.5`.
@@ -425,11 +425,11 @@ def percentile_of(f: pd.DataFrame, run_code: str, value: float) -> float:
 
 
 def focus_run(root=None) -> str | None:
-    """The slate everything defaults to showing: the one the last bet is on.
+    """The slate everything defaults to showing: the one the last position was taken on.
 
     The last line of the placed table, not the newest run. Those differ the
     moment `06` is run for tomorrow -- the newest run is then a slate with no
-    result and no bet on it, and defaulting to it would draw an empty chart over
+    result and no position on it, and defaulting to it would draw an empty chart over
     a live one. Falls back to the newest settled run when nothing has been backed
     yet.
     """
@@ -449,7 +449,7 @@ def focus_run(root=None) -> str | None:
 
 
 def placed_rank(f: pd.DataFrame, placed: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Where the bet actually struck landed in its own slate's frontier."""
+    """Where the position actually taken landed in its own slate's frontier."""
     placed = ledger.read_table("placed") if placed is None else placed
     if f.empty or placed is None or placed.empty:
         return pd.DataFrame()
@@ -553,7 +553,7 @@ def strategy_reference(f: pd.DataFrame, placed: pd.DataFrame | None = None) -> p
     """The rows a strategy table has to be read against.
 
     Without them the percentile column is a number with no anchor: the median
-    portfolio is 0.500 by construction, and the bet actually placed is the only
+    portfolio is 0.500 by construction, and the position actually taken is the only
     row on the table that cost anything.
     """
     if f.empty:
@@ -568,7 +568,7 @@ def strategy_reference(f: pd.DataFrame, placed: pd.DataFrame | None = None) -> p
              "mean_return": float(f.groupby("run_code")["realised_return"].mean().mean())}]
     pr = placed_rank(f, placed)
     if not pr.empty:
-        rows.append({"strategy": "-- YOUR BET", "split": "all", "n_slates": len(pr),
+        rows.append({"strategy": "-- POSITION TAKEN", "split": "all", "n_slates": len(pr),
                      "mean_percentile": float(pr["percentile"].mean()),
                      "mean_return": float(pr["realised"].mean())})
     return pd.DataFrame(rows)
@@ -735,7 +735,7 @@ def run_all(root=None) -> dict[str, pd.DataFrame]:
         "frontier_attribution": frontier_attribution(f),
         "characteristic_deciles": characteristic_deciles(f),
         "growth_check": growth_check(picks),
-        "bankroll": ledger.bankroll(root),
+        "statement": ledger.statement(root),
     }
 
 

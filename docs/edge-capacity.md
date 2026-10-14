@@ -41,7 +41,7 @@ doubles the compounding rate off the same edge. A hundred-leg book compounds abo
 **6.3× faster** than a ten-leg book on an identical edge, because it is allowed six
 times as much money on the table.
 
-It stops at the edge of the bankroll. You cannot stake more than you own, so growth
+It stops at the edge of available capital. You cannot stake more than you own, so growth
 is capped at `ln(1 + edge)` — 9.53% per round at a 10% edge, however many legs. A
 hundred legs already reaches 96% of it. Past that, extra legs buy certainty, not
 growth.

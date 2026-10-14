@@ -349,7 +349,7 @@ def _write_query(ws, last_row: int, n_rows: int) -> None:
 
 
 def _leg_rows(scored: pd.DataFrame, picks: np.ndarray, options, cap: int) -> pd.DataFrame:
-    """Individual bets for the portfolios worth writing out, undominated first."""
+    """Individual positions for the portfolios worth writing out, undominated first."""
     order = scored.sort_values(["undominated", "p_over_100"], ascending=[False, False])
     frames = []
     for rec in order.head(cap).to_dict("records"):
@@ -362,7 +362,7 @@ def _leg_rows(scored: pd.DataFrame, picks: np.ndarray, options, cap: int) -> pd.
 
 def _write_legs(ws, rows: pd.DataFrame) -> int:
     _title(ws, f"Legs for {rows['id'].nunique() if len(rows) else 0} portfolios "
-               f"({len(rows):,} bets)", span=9)
+               f"({len(rows):,} positions)", span=9)
     ws.cell(2, 1).value = ("Stake is a fraction of the total. The Stake Calculator reads this "
                            "sheet by ID, so a portfolio missing from here cannot be costed there.")
     ws.cell(2, 1).font = Font(italic=True)
@@ -407,7 +407,7 @@ def _write_calculator(ws, scored: pd.DataFrame, last_leg_row: int,
 
     legs_id = f"Legs!$A${FIRST_DATA_ROW}:$A${max(last_leg_row, FIRST_DATA_ROW)}"
     legs_all = f"Legs!$B${FIRST_DATA_ROW}:$I${max(last_leg_row, FIRST_DATA_ROW)}"
-    header(ws, 4, 1, 8, "The bets")
+    header(ws, 4, 1, 8, "The positions")
     ws.cell(5, 1).value = (f'=IFERROR({future("FILTER")}({legs_all},{legs_id}=$B$2),'
                            f'"no portfolio with that ID on the Legs sheet")')
     ws.cell(6, 1).value = ("Spills: Event | Fixture | Proposition | P | O | Book | E | Stake fraction. "

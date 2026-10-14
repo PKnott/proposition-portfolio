@@ -1,4 +1,4 @@
-"""What fraction of the bankroll one portfolio should get, round after round.
+"""What fraction of capital one portfolio should get, round after round.
 
 `06_Split` answers "what does one round look like": the ``(expected return,
 variance, P(profit))`` frontier describes a single settlement. Reinvest, and a
@@ -180,7 +180,7 @@ def growth_rate(f: np.ndarray, dist: np.ndarray, values: np.ndarray) -> np.ndarr
     ``dist`` and ``values`` are one row of `portfolio.return_pmf` and its value
     axis. Returns shape ``(len(f),)``.
 
-    Where any reachable return drives the bankroll multiplier to zero or below,
+    Where any reachable return drives the capital multiplier to zero or below,
     the result is ``-inf`` and is returned as such. A clipped logarithm would
     hand back a large finite number and make ruin look merely unattractive
     instead of terminal: with ``p0 > 0``, ``f >= 1`` is ruin eventually however
@@ -225,7 +225,7 @@ def sample_rounds(dist: np.ndarray, values: np.ndarray, *, paths: int = GROWTH_P
     """``(paths, rounds)`` of returns drawn from the portfolio's own distribution.
 
     Separated from `drawdown_prob` because **the draw does not depend on ``f``**.
-    Only the bankroll multiplier does. Sampling once per portfolio and reusing the
+    Only the capital multiplier does. Sampling once per portfolio and reusing the
     same rounds across every ``f`` the search visits is the difference between one
     sample and seven, and it makes those seven answers common-random-number
     comparisons of one set of futures rather than seven independent ones -- so the
@@ -271,7 +271,7 @@ def max_drawdowns(f: float, returns: np.ndarray) -> np.ndarray:
     mult = (1.0 - f) + f * returns
     if np.any(mult <= 0):
         return np.ones(len(returns))    # a reachable wipe-out; every path ruins
-    curve = np.cumsum(np.log(mult), axis=1)         # log bankroll, starting at 0
+    curve = np.cumsum(np.log(mult), axis=1)         # log capital, starting at 0
     peak = np.maximum.accumulate(
         np.concatenate([np.zeros((len(curve), 1)), curve], axis=1), axis=1)
     return 1.0 - np.exp((curve - peak[:, :-1]).min(axis=1))
@@ -447,7 +447,7 @@ def wealth_bands(f: float, returns: np.ndarray, *, at: np.ndarray,
     """Percentiles of cumulative **log** wealth at each round in `at`.
 
     ``(len(quantiles), len(at))``, or ``None`` where `f` cannot be plotted: a
-    non-finite fraction, or one that makes some reachable round wipe the bankroll
+    non-finite fraction, or one that makes some reachable round wipe out capital
     out. `drawdown_prob` calls that second case every path ruining, and this
     agrees with it rather than drawing a line into ``-inf``.
 
@@ -542,7 +542,7 @@ def growth_metrics(pay: np.ndarray, p: np.ndarray, *, grid: int = GRID,
         # zeroes all nine on its own, which is the honest answer there.
         cells = {k: suggested_fraction(v, pay[i], p[i])[0] for k, v in grid.items()}
         # Staking nothing is a real answer, and its growth rate is exactly zero --
-        # the bankroll does not move. Reporting NaN there would put a hole in the
+        # capital does not move. Reporting NaN there would put a hole in the
         # payload for the one case the reader most needs stated plainly.
         g_sug = float(growth_rate(np.array([f_sug]), dist[i], values)[0]) \
             if f_sug > 0 else 0.0

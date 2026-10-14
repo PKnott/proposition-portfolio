@@ -1,4 +1,4 @@
-"""The odds capture workbook: a blank form for hand-entering bookmaker prices.
+"""The odds capture workbook: a blank form for hand-entering market prices.
 
 `05_Run` writes this next to the predictions workbook, with the same sheet names,
 so the two line up one to one. Each fixture sheet lists every proposition the

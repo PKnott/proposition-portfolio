@@ -1,7 +1,7 @@
 """From model probabilities to a stake: edge, dominance, allocation.
 
 The predictions workbook prices every proposition against the model alone. This
-module is the step after that -- it takes a bookmaker's price for the same
+module is the step after that -- it takes a market price for the same
 proposition and asks whether the price is wrong in our favour, then decides how
 much to put on the ones that are.
 
@@ -12,13 +12,13 @@ to back together, and in what mix, is a portfolio question and lives in
 Naming, deliberately strict
 ---------------------------
 The fixture sheets already carry a column headed "Odds" holding ``1 / P`` -- the
-model's own fair price, not a bookmaker's. Reusing that word here would make it
+model's own fair price, not the market's. Reusing that word here would make it
 genuinely ambiguous which of the two any given variable held, so nothing in this
 module is called `odds`:
 
 ===  =====================================================================
 `p`  model probability, straight from the predictions workbook
-`o`  bookmaker price in decimal, best of the two books quoted
+`o`  market price in decimal, best of the two books quoted
 `e`  edge, ``p * o``. Above 1 the price pays more than the model says it should
 `s`  stake on one proposition
 `S`  total stake across a portfolio
@@ -100,25 +100,25 @@ THRESHOLDS = (0.90, 1.00, 1.10)
 # definition: the form writes these headers, the form reader parses them back, and
 # `best_price` reports which of them won. Adding a book is a line here.
 #
-# Virgin Bet was dropped on 2026-09-13. Its feed on the comparison page this is
-# filled from had been frozen since 1 September -- every `VE` price on a match
-# carried one identical timestamp eleven days stale, while the live books
-# re-quoted hourly -- and the site had already removed it from its own bookmaker
+# One price source was dropped on 2026-09-13. Its feed on the comparison page this
+# is filled from had been frozen since 1 September -- every price it showed on a
+# match carried one identical timestamp eleven days stale, while the live sources
+# re-quoted hourly -- and the site had already removed it from its own source
 # catalogue, so nothing a visitor sees was ever showing those prices. Stale
 # prices are worse than absent ones here: `best_price` takes the row max, so a
 # frozen quote wins rows it should not and invents the edge on them. On the
 # 2026-09-12 slate it was the sole best price on 23 of 762 priced rows, leading
 # by a median of 5% and by as much as 20%.
 #
-# Betfair Exchange took that column for half a day and came back out, on
-# commission rather than on coverage. The exchange quotes a *back* price and
-# takes its cut out of net winnings, so a 5.50 on the page is about 5.41 at a
-# 2% rate -- while `best_price` compares it gross against sportsbook prices that
+# An exchange price source took that column for half a day and came back out, on
+# commission rather than on coverage. An exchange quotes a price before its
+# commission, which is taken out of net returns, so a 5.50 on the page is about
+# 5.41 at a 2% rate -- while `best_price` compares it gross against prices that
 # need no such adjustment. That flatters every row the exchange wins, which is
-# the same fault Virgin Bet was removed for, only smaller and in a direction the
-# form cannot see. The column is worth having once the haircut is applied in
-# `best_price` and not before; the argument for it is unchanged and good --
-# an exchange does not restrict or close a winning account.
+# the same fault as the stale feed, only smaller and in a direction the form
+# cannot see. The column is worth having once the commission is netted off in
+# `best_price` and not before; the argument for it is unchanged -- an exchange
+# does not restrict account size.
 #
 # The order here is the column order on the form, and the keys are the column
 # names the whole pipeline uses. Nothing downstream of `best_price` sees a book
@@ -189,7 +189,7 @@ def label_parts(labels: pd.Series) -> pd.DataFrame:
     Tolerant rather than strict because a label this cannot read is a proposition
     that simply cannot be paired, which is a normal outcome and not an error. The
     strict version stays for `ledger`, where an unreadable label *is* a bug: it
-    means a result cannot be joined back to the bet that produced it.
+    means a result cannot be joined back to the position that produced it.
     """
     out = {"target": [], "team": [], "line": []}
     for raw in labels:
@@ -255,7 +255,7 @@ def qualifying(props: pd.DataFrame, min_p: float = MIN_MODEL_P) -> pd.DataFrame:
     """The propositions worth asking for a price on, in the order you type them.
 
     Sorted **fixture, then target, then team, then line ascending** -- the shape
-    of a bookmaker's own page. Probability order reads better on screen but is
+    of a price source's own page. Probability order reads better on screen but is
     miserable to enter from: it scatters one team's ladder down the sheet, so
     every price means finding the row again. Grouping a team's whole ladder
     together and running it upward turns entry into typing down a column.
@@ -292,11 +292,11 @@ def best_price(df: pd.DataFrame, books: tuple[str, ...] = BOOK_COLUMNS) -> pd.Da
     that line. Those are skipped in the max rather than treated as a number, so
     only a proposition unpriced by *every* book disappears.
 
-    The winning book travels with the price because the output is a list of bets
-    to go and place: an edge is worthless if you have to come back here to find
+    The winning book travels with the price because the output is a list of positions
+    to go and take: an edge is worthless if you have to come back here to find
     out where it was available. On an exact tie every winner pays the same, so
-    none of them is "the" source and the row names all of them -- "Bet365 / Sky
-    Bet" rather than a bare "Both", which stopped being answerable the moment a
+    none of them is "the" source and the row names all of them -- two source names
+    joined by " / " rather than a bare "Both", which stopped being answerable the moment a
     third book joined the form.
     """
     out = df.copy()

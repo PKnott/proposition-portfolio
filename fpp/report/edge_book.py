@@ -329,7 +329,7 @@ def _stake_fractions(kept: pd.DataFrame, picks: np.ndarray, opts) -> list[list[f
         combos = sub["combo"].to_numpy()
         rows = picks[combos]
         stakes, prob, _, _ = stakes_for(rows, opts, str(split))
-        # A slot is a real bet when it carries a probability; that covers skipped
+        # A slot is a real position when it carries a probability; that covers skipped
         # events and the empty second slot of a single in one test.
         for label, st, pr in zip(sub.index, stakes, prob):
             out[positions[label]] = [round(float(v), 6) for v in st[pr > 0]]
@@ -353,7 +353,7 @@ def _band_rows(b) -> dict | None:
     """A ``(quantiles, rounds)`` band array as ``{"p5": [...], ...}``.
 
     ``None`` where the fan could not be drawn -- `growth.wealth_bands` returns it
-    for a stake that is non-finite or that wipes the bankroll out on a reachable
+    for a stake that is non-finite or that wipes out capital on a reachable
     round. The key is absent rather than empty so the page can say so.
 
     Four decimals because these are *log* wealth: the whole exported range is

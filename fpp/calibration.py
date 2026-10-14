@@ -4,7 +4,7 @@ Log loss answers "is this model better than that one". It does not answer "when
 this model says 62%, does the thing happen 62% of the time" -- and that second
 question is the one that decides whether a priced ladder is usable. A model can
 win on log loss and still be systematically overconfident at exactly the lines
-worth betting.
+worth taking a position in.
 
 So every market is reduced to a stream of (predicted probability, outcome) pairs
 and interrogated three ways:
@@ -502,7 +502,7 @@ def line_verdicts(summary: pd.DataFrame, bins: pd.DataFrame,
 def summarise_by_target(verdicts: pd.DataFrame) -> pd.DataFrame:
     """Per target and metric: how many of its lines survive, and which.
 
-    The four-line answer to "which of these can I actually bet".
+    The four-line answer to "which of these can I actually take a position in".
     """
     rows = []
     for (t, m), g in verdicts.groupby(["target", "metric"], observed=True):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write gathered bookmaker prices into a daily odds_input workbook.
+"""Write gathered market prices into a daily odds_input workbook.
 
 The other half of `/fill-odds`. The skill does the browsing, the matching and the
 judgement; this script does none of it. It takes a JSON file of already-matched
@@ -198,7 +198,7 @@ def main() -> None:
     print(f"Sheets processed: {len(target_sheets) - len(skipped)} / {len(target_sheets)}")
     print(f"Propositions filled: {total_filled}"
           + (f" of {priced_of} ({total_filled / priced_of:.0%})" if priced_of else ""))
-    print(f"Propositions defaulted to 0 (no bookmaker match): {total_missing}")
+    print(f"Propositions defaulted to 0 (no price-source match): {total_missing}")
     if skipped:
         print(f"Sheets skipped entirely: {len(skipped)}")
         for s in skipped:

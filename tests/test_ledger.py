@@ -124,7 +124,7 @@ def test_two_runs_under_different_sheet_codes_share_one_key():
 
 
 def test_only_priced_propositions_are_banked():
-    """A row no book quoted has no price to settle against and is not a bet."""
+    """A row no book quoted has no price to settle against and is not a position."""
     f = form_rows(prices=[2.0, None])
     out = ledger.proposition_rows(f, "R001")
     assert len(out) == 1
@@ -287,7 +287,7 @@ def test_absorbing_a_run_already_held_does_not_double_it(root):
     assert len(ledger.read_table("runs", root)) == 1
 
 
-# --- roll-up and placed bets ----------------------------------------------
+# --- roll-up and recorded positions ----------------------------------------
 
 
 def test_a_portfolio_is_only_rolled_up_once_every_leg_has_settled(root):
@@ -315,9 +315,9 @@ def test_record_bet_takes_the_reference_the_page_prints(root):
     ledger.write_table(pd.DataFrame([{
         "run_code": "R007", "portfolio_id": 770, "g_f_protective": 0.21,
         "g_f_star": 0.99}]), "portfolios", root)
-    rec = ledger.record_bet("R007-770", pot=1000, mode="protective", root=root)
+    rec = ledger.record_position("R007-770", pot=1000, mode="protective", root=root)
     assert rec["stake"] == pytest.approx(210.0)
-    rec = ledger.record_bet("R007-770", pot=1000, mode="max", root=root)
+    rec = ledger.record_position("R007-770", pot=1000, mode="max", root=root)
     assert rec["stake"] == pytest.approx(990.0)
     # Re-recording replaces rather than doubling, so a corrected pot is one call.
     assert len(ledger.read_table("placed", root)) == 1
@@ -327,9 +327,9 @@ def test_record_bet_refuses_a_portfolio_the_ledger_does_not_hold(root):
     ledger.write_table(pd.DataFrame([{"run_code": "R007", "portfolio_id": 770}]),
                        "portfolios", root)
     with pytest.raises(KeyError, match="not in the ledger"):
-        ledger.record_bet("R007-999", pot=100, root=root)
+        ledger.record_position("R007-999", pot=100, root=root)
     with pytest.raises(ValueError, match="R007"):
-        ledger.record_bet("R007", pot=100, root=root)
+        ledger.record_position("R007", pot=100, root=root)
 
 
 # --- purge ----------------------------------------------------------------
@@ -401,7 +401,7 @@ def _one_portfolio(root, realised=None, settled=True):
 
 def test_an_empty_account_has_a_zero_balance(root):
     assert ledger.balance(root) == 0.0
-    assert ledger.bankroll(root).empty
+    assert ledger.statement(root).empty
 
 
 def test_opening_a_balance_twice_moves_it_rather_than_adding_one(root):
@@ -421,23 +421,23 @@ def test_deposits_and_withdrawals_move_the_balance(root):
 def test_a_settled_bet_moves_the_balance_by_stake_times_return(root):
     _one_portfolio(root, realised=0.5)
     ledger.open_account(1000, when="2026-08-01", root=root)
-    ledger.record_bet("R001-1", pot=1000, mode="protective", root=root)   # 20% = 200
-    book = ledger.bankroll(root)
-    bet = book[book["kind"] == "bet"].iloc[0]
-    assert bet["stake"] == pytest.approx(200.0)
-    assert bet["pnl"] == pytest.approx(100.0)
-    assert bet["returned"] == pytest.approx(300.0)
+    ledger.record_position("R001-1", pot=1000, mode="protective", root=root)   # 20% = 200
+    book = ledger.statement(root)
+    pos = book[book["kind"] == "position"].iloc[0]
+    assert pos["stake"] == pytest.approx(200.0)
+    assert pos["pnl"] == pytest.approx(100.0)
+    assert pos["returned"] == pytest.approx(300.0)
     assert ledger.balance(root) == pytest.approx(1100.0)
 
 
 def test_an_unsettled_bet_is_pending_and_leaves_the_balance_alone(root):
-    """The stake is with the bookmaker and the outcome is unknown. Booking it
+    """The capital is committed and the outcome is unknown. Booking it
     either way would be a guess, and a NaN would poison every later row."""
     _one_portfolio(root, realised=None, settled=False)
     ledger.open_account(1000, when="2026-08-01", root=root)
-    ledger.record_bet("R001-1", pot=1000, root=root)
-    book = ledger.bankroll(root)
-    assert bool(book[book["kind"] == "bet"].iloc[0]["pending"])
+    ledger.record_position("R001-1", pot=1000, root=root)
+    book = ledger.statement(root)
+    assert bool(book[book["kind"] == "position"].iloc[0]["pending"])
     assert ledger.balance(root) == pytest.approx(1000.0)
 
 
@@ -446,10 +446,10 @@ def test_the_pot_defaults_to_the_balance_rather_than_being_retyped(root):
     this default exists to remove."""
     _one_portfolio(root, realised=-1.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
-    ledger.record_bet("R001-1", root=root)                    # 20% of 1000 = 200
+    ledger.record_position("R001-1", root=root)                    # 20% of 1000 = 200
     assert ledger.balance(root) == pytest.approx(800.0)
 
-    # Append: replacing the table would orphan R001's bet, and a bet whose
+    # Append: replacing the table would orphan R001's position, and a position whose
     # portfolio has vanished reads as pending -- which would leave the balance at
     # 1000 and make this test pass for the wrong reason.
     ledger.write_table(pd.concat([ledger.read_table("portfolios", root), pd.DataFrame(
@@ -459,7 +459,7 @@ def test_the_pot_defaults_to_the_balance_rather_than_being_retyped(root):
     ledger.write_table(pd.concat([ledger.read_table("runs", root), pd.DataFrame(
         [{"run_code": "R002", "run_date": "2026-08-22", "status": "active"}])],
         ignore_index=True), "runs", root)
-    rec = ledger.record_bet("R002-1", root=root)
+    rec = ledger.record_position("R002-1", root=root)
     assert rec["pot"] == pytest.approx(800.0)                 # not 1000
     assert rec["stake"] == pytest.approx(160.0)
 
@@ -467,17 +467,17 @@ def test_the_pot_defaults_to_the_balance_rather_than_being_retyped(root):
 def test_staking_with_no_account_says_so(root):
     _one_portfolio(root, realised=0.1)
     with pytest.raises(ValueError, match="no balance to stake from"):
-        ledger.record_bet("R001-1", root=root)
+        ledger.record_position("R001-1", root=root)
 
 
 def test_the_statement_runs_in_date_order_with_money_in_before_the_bet(root):
     _one_portfolio(root, realised=0.5)
     ledger.open_account(1000, when="2026-08-01", root=root)
     ledger.deposit(500, when="2026-08-21", root=root)
-    ledger.record_bet("R001-1", pot=1000, root=root)
+    ledger.record_position("R001-1", pot=1000, root=root)
     ledger.withdraw(50, when="2026-08-21", root=root)
-    book = ledger.bankroll(root)
-    assert list(book["kind"]) == ["opening", "deposit", "bet", "withdrawal"]
+    book = ledger.statement(root)
+    assert list(book["kind"]) == ["opening", "deposit", "position", "withdrawal"]
     assert list(book["balance"].round(2)) == [1000.0, 1500.0, 1600.0, 1550.0]
 
 
@@ -488,9 +488,9 @@ def test_the_three_modes_size_the_stake_three_ways(root):
     _one_portfolio(root, realised=0.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
 
-    assert ledger.record_bet("R001-1", mode="protective", root=root)["stake"] == pytest.approx(200.0)
-    assert ledger.record_bet("R001-1", mode="max", root=root)["stake"] == pytest.approx(900.0)
-    rec = ledger.record_bet("R001-1", f=0.15, root=root)
+    assert ledger.record_position("R001-1", mode="protective", root=root)["stake"] == pytest.approx(200.0)
+    assert ledger.record_position("R001-1", mode="max", root=root)["stake"] == pytest.approx(900.0)
+    rec = ledger.record_position("R001-1", f=0.15, root=root)
     assert rec["stake"] == pytest.approx(150.0) and rec["mode"] == "custom"
 
 
@@ -499,14 +499,14 @@ def test_an_explicit_fraction_is_filed_as_custom_not_as_the_default_mode(root):
     did -- the strategy analysis reads that column."""
     _one_portfolio(root, realised=0.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
-    assert ledger.record_bet("R001-1", f=0.33, root=root)["mode"] == "custom"
+    assert ledger.record_position("R001-1", f=0.33, root=root)["mode"] == "custom"
 
 
 def test_a_cash_stake_is_turned_into_a_fraction_of_the_pot(root):
     """Sometimes what you know is 'I put 150 on', not 'I staked 15%'."""
     _one_portfolio(root, realised=0.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
-    rec = ledger.record_bet("R001-1", stake=150, root=root)
+    rec = ledger.record_position("R001-1", stake=150, root=root)
     assert rec["f"] == pytest.approx(0.15)
     assert rec["stake"] == pytest.approx(150.0)
     assert rec["mode"] == "custom"
@@ -516,7 +516,7 @@ def test_custom_with_nothing_to_go_on_says_what_is_missing(root):
     _one_portfolio(root, realised=0.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
     with pytest.raises(ValueError, match="custom staking needs"):
-        ledger.record_bet("R001-1", mode="custom", root=root)
+        ledger.record_position("R001-1", mode="custom", root=root)
 
 
 @pytest.mark.parametrize("kwargs, match", [
@@ -529,7 +529,7 @@ def test_a_stake_that_cannot_be_made_sense_of_is_refused(root, kwargs, match):
     _one_portfolio(root, realised=0.0)
     ledger.open_account(1000, when="2026-08-01", root=root)
     with pytest.raises(ValueError, match=match):
-        ledger.record_bet("R001-1", root=root, **kwargs)
+        ledger.record_position("R001-1", root=root, **kwargs)
 
 
 def test_a_portfolio_with_no_growth_block_cannot_be_staked_by_mode(root):
@@ -541,8 +541,8 @@ def test_a_portfolio_with_no_growth_block_cannot_be_staked_by_mode(root):
                        "runs", root)
     ledger.open_account(1000, when="2026-08-01", root=root)
     with pytest.raises(ValueError, match="no protective stake"):
-        ledger.record_bet("R001-1", root=root)
-    assert ledger.record_bet("R001-1", f=0.1, root=root)["stake"] == pytest.approx(100.0)
+        ledger.record_position("R001-1", root=root)
+    assert ledger.record_position("R001-1", f=0.1, root=root)["stake"] == pytest.approx(100.0)
 
 
 def _page(tmp_path, date, name="Elversberg"):

@@ -191,7 +191,7 @@ maximises portfolio Sharpe over every possible weighting, and it is where the
 Sharpe² = Σ Sᵢ² identity comes from. A per-leg cap limits concentration and
 reports what it costs.
 
-The fraction of the bankroll committed is the largest `f` that keeps
+The fraction of capital committed is the largest `f` that keeps
 P(30% drawdown within 100 rounds) under 5%. It is read from 4,000 simulated paths
 of the portfolio's *actual* discrete distribution, because at eight to twenty
 win/lose legs a normal approximation misstates the tail. In one portfolio the

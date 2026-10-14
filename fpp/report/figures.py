@@ -216,13 +216,13 @@ def frontier_return_figure(hist: pd.DataFrame, dist: pd.DataFrame | None = None,
 
     The one picture that argues for caring about selection: same slate, same
     propositions, and a bar chart that runs from wiped out to nearly tripled. The
-    median and the bet actually placed are drawn on it, because the distance
+    median and the position actually taken are drawn on it, because the distance
     between those two is the part that is yours to control.
 
     **One slate at a time**, and `run_code` defaults to the most recent rather
     than to the pooled `"all"` row. Pooling was the original behaviour and it was
     wrong twice over: two slates with medians 55 points apart make a mixture that
-    describes neither, and the marker showed the *first* bet ever placed rather
+    describes neither, and the marker showed the *first* position ever taken rather
     than the one from the slate being drawn -- so the chart kept reporting an
     old result against a new distribution.
     """
@@ -250,7 +250,7 @@ def frontier_return_figure(hist: pd.DataFrame, dist: pd.DataFrame | None = None,
         """Place a return on the categorical bar scale.
 
         Interpolated *within* its band, not snapped to a band edge: the median
-        and the bet placed routinely fall in the same 25-point band, and snapping
+        and the position taken routinely fall in the same 25-point band, and snapping
         drew both lines on top of each other with their labels overprinted --
         hiding the one comparison the chart exists to make.
         """
@@ -278,12 +278,12 @@ def frontier_return_figure(hist: pd.DataFrame, dist: pd.DataFrame | None = None,
             ax.set_title(f"{label}   {int(r['n']):,} portfolios   "
                          f"{r['min']:+.0%} to {r['max']:+.0%}   "
                          f"{r['share_profitable']:.0%} profitable", fontsize=10)
-    # The bet from *this* slate, not row zero of every bet ever placed.
+    # The position from *this* slate, not row zero of every position ever taken.
     if placed is not None and not placed.empty and "run_code" in placed:
         mine = placed[placed["run_code"] == run_code]
         if not mine.empty:
             v = float(mine["realised"].iloc[0])
-            rule(v, "#D16002", f"your bet {v:+.1%}  (p{mine['percentile'].iloc[0]:.0%})")
+            rule(v, "#D16002", f"position taken {v:+.1%}  (p{mine['percentile'].iloc[0]:.0%})")
     ax.grid(axis="y", alpha=.25)
     fig.tight_layout()
     return fig

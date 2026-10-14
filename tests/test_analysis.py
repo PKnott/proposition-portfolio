@@ -435,7 +435,7 @@ def test_the_symmetric_verdict_is_left_alone_for_comparability(rng):
 
 
 def two_slate_frames():
-    """Two slates with very different medians, and a bet placed on each."""
+    """Two slates with very different medians, and a position taken on each."""
     a = frontier_frame(slates=("R001",))
     b = frontier_frame(slates=("R002",), seed=3)
     b["realised_return"] = b["realised_return"] + 0.55        # a much better slate
@@ -451,7 +451,7 @@ def two_slate_frames():
 
 def test_the_figure_marks_the_bet_from_the_slate_it_is_drawing():
     """The bug this guards: the marker was `placed.iloc[0]`, so a chart of the
-    newest slate kept reporting the first bet ever placed -- an old result drawn
+    newest slate kept reporting the first position ever taken -- an old result drawn
     against a new distribution."""
     from fpp.report.figures import frontier_return_figure
 

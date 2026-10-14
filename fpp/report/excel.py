@@ -23,7 +23,7 @@ at that **team's own venue**. The model is pooled; the comparison baseline is
 not, on either axis.
 
 Match-total over/under is deliberately absent from the fixture blocks. It is a
-different bet from the per-team ladders that surround it and reading the two off
+different position from the per-team ladders that surround it and reading the two off
 one table invited exactly that confusion; the league panel still carries match
 rates as reference.
 """

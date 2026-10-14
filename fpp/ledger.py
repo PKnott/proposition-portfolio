@@ -113,7 +113,7 @@ def prop_key(fixture_date, league_key: str, home: str, away: str,
              target: str, team: str, line: float) -> str:
     """The structural identity of one proposition, as one string.
 
-    Everything in it is a fact about the fixture and the bet. Nothing in it is a
+    Everything in it is a fact about the fixture and the position. Nothing in it is a
     fact about the run that happened to produce it, which is the whole point --
     the same proposition offered on two runs is one row here.
     """
@@ -366,8 +366,8 @@ def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
     """Write one run into the inbox, and hand back the code it was given.
 
     Call this *before* `write_portfolios_json` so the run code can travel in the
-    payload and the Edge Book can print `R007-770` on the betting slip -- that
-    string is what `record_bet` wants back, and reading it off the page you are
+    payload and the Edge Book can print `R007-770` on the order ticket -- that
+    string is what `record_position` wants back, and reading it off the page you are
     already looking at beats remembering which run it was.
     """
     from .report.edge_book import portfolios_payload
@@ -647,7 +647,7 @@ def purge(*run_codes: str, reason: str = "", root: Path | None = None) -> pd.Dat
     would describe a model nobody is running.
 
     The `runs` row **stays**, marked `excluded`, and only its propositions,
-    portfolios, legs and placed bet are removed. That is deliberate on two
+    portfolios, legs and recorded position are removed. That is deliberate on two
     counts. It keeps `backfill` from cheerfully re-importing the run the next
     time it walks the archive, since it skips any date `runs` already names. And
     it leaves the ledger able to say why its history starts where it does, which
@@ -897,17 +897,17 @@ def roll_up(root: Path | None = None) -> pd.DataFrame:
 
 # --- the money ------------------------------------------------------------
 #
-# The Projection Book's whole claim is about a bankroll compounding round over
-# round, so the ledger has to know what the bankroll *is* rather than being told
+# The Projection Book's whole claim is about capital compounding round over
+# round, so the ledger has to know what the capital *is* rather than being told
 # a pot each time. `cash` holds the money that arrives and leaves by hand; the
-# bets move the rest, and `balance` is the two folded together.
+# positions move the rest, and `balance` is the two folded together.
 
-# The one the model computes, named as the Edge Book's betting slip labels it so
+# The one the model computes, named as the Edge Book's order ticket labels it so
 # the word you read on the page is the word you type here. `custom` is the other:
 # a fraction you chose, which by definition no column can supply.
 #
-# `protective` and `max` stay as aliases. Bets were recorded under those names and
-# `record_bet` has to keep accepting them; `max` resolves to a column that new
+# `protective` and `max` stay as aliases. Positions were recorded under those names and
+# `record_position` has to keep accepting them; `max` resolves to a column that new
 # runs no longer fill, which is correct -- it was the growth optimum, and that
 # number sat at its own ceiling on two thirds of portfolios.
 STAKE_MODES: dict[str, str] = {
@@ -925,10 +925,10 @@ LEG_AGGREGATES: tuple[str, ...] = (
     "mean_leg_e",
 )
 
-# Ordering within one day: money in before the bet it funded, money out after the
-# bet it was funded by. Without it a same-day deposit and stake settle in
+# Ordering within one day: money in before the position it funded, money out after the
+# position it was funded by. Without it a same-day deposit and stake settle in
 # whatever order the rows happen to sit in.
-_CASH_RANK: dict[str, int] = {"opening": 0, "deposit": 1, "bet": 2, "withdrawal": 3}
+_CASH_RANK: dict[str, int] = {"opening": 0, "deposit": 1, "position": 2, "withdrawal": 3}
 
 
 def _cash_row(kind: str, amount: float, when, note: str) -> dict:
@@ -969,32 +969,32 @@ def deposit(amount: float, when=None, note: str = "", root: Path | None = None) 
 
 
 def withdraw(amount: float, when=None, note: str = "", root: Path | None = None) -> pd.Series:
-    """Money taken out. Stored positive; `bankroll` is what subtracts it."""
+    """Money taken out. Stored positive; `statement` is what subtracts it."""
     rec = _add_cash(_cash_row("withdrawal", abs(amount), when, note), root)
     print(f"Withdrawal {abs(amount):,.2f} on {rec['when']}  ->  balance {balance(root):,.2f}")
     return rec
 
 
 def balance(root: Path | None = None) -> float:
-    """The pot right now: opening, plus and minus cash, plus every settled bet.
+    """The pot right now: opening, plus and minus cash, plus every settled position.
 
-    An unsettled bet does not move it. The stake is with the bookmaker and the
-    outcome is unknown, so counting it either way would be a guess -- `bankroll`
+    An unsettled position does not move it. The capital is committed and the
+    outcome is unknown, so counting it either way would be a guess -- `statement`
     marks those rows `pending` instead.
     """
-    book = bankroll(root)
+    book = statement(root)
     if book.empty:
         return 0.0
     return float(book["balance"].iloc[-1])
 
 
-def record_bet(ref: str, *, pot: float | None = None, mode: str | None = None,
+def record_position(ref: str, *, pot: float | None = None, mode: str | None = None,
                f: float | None = None, stake: float | None = None,
                root: Path | None = None) -> pd.Series:
     """Record which portfolio was backed, and for how much.
 
     `ref` is what the Edge Book prints: ``"R007-770"``. Optional by design --
-    skip a slate and the ledger holds no bet for that run, which is the truth.
+    skip a slate and the ledger holds no position for that run, which is the truth.
     Recording the same run twice replaces rather than doubles, so a corrected pot
     is one call, not a hand edit.
 
@@ -1072,19 +1072,19 @@ def record_bet(ref: str, *, pot: float | None = None, mode: str | None = None,
     return rec.iloc[0]
 
 
-def bankroll(root: Path | None = None) -> pd.DataFrame:
-    """A bank statement: every cash movement and every bet, in order, with a
+def statement(root: Path | None = None) -> pd.DataFrame:
+    """A bank statement: every cash movement and every position, in order, with a
     running balance.
 
-    One chronological table rather than a cash table beside a bets table,
+    One chronological table rather than a cash table beside a positions table,
     because the question it answers -- what is the pot now, and what moved it --
-    is answered by the interleaving. Deposits show up beside the bets they
+    is answered by the interleaving. Deposits show up beside the positions they
     funded, which is the only way a rising balance can be told apart from a
     winning run.
 
-    A bet moves the balance by `stake * realised_return`, once its legs have all
+    A position moves the balance by `stake * realised_return`, once its legs have all
     settled. Until then the row is `pending` and the balance is unchanged: the
-    stake is with the bookmaker and the outcome is unknown, so booking it either
+    capital is committed and the outcome is unknown, so booking it either
     way would be a guess dressed as a number.
     """
     cash = read_table("cash", root)
@@ -1102,15 +1102,15 @@ def bankroll(root: Path | None = None) -> pd.DataFrame:
     if not placed.empty:
         cols = ["run_code", "portfolio_id", "realised_return", "settled", "legs", "split",
                 "expected_return_pct", "g_g_protective"]
-        bets = placed.merge(portfolios[[c for c in cols if c in portfolios]],
+        held = placed.merge(portfolios[[c for c in cols if c in portfolios]],
                             on=["run_code", "portfolio_id"], how="left")
         if not runs.empty:
-            bets = bets.merge(runs[["run_code", "run_date"]], on="run_code", how="left")
-        for r in bets.to_dict("records"):
+            held = held.merge(runs[["run_code", "run_date"]], on="run_code", how="left")
+        for r in held.to_dict("records"):
             done = bool(r.get("settled")) and pd.notna(r.get("realised_return"))
             events.append({
                 "when": str(r.get("run_date") or r.get("recorded_at", ""))[:10],
-                "kind": "bet", "ref": f"{r['run_code']}-{int(r['portfolio_id'])}",
+                "kind": "position", "ref": f"{r['run_code']}-{int(r['portfolio_id'])}",
                 "cash": 0.0, "note": r.get("split") or "",
                 "mode": r.get("mode"), "f": r.get("f"), "pot": r.get("pot"),
                 "stake": r.get("stake"), "legs": r.get("legs"),
@@ -1132,7 +1132,7 @@ def bankroll(root: Path | None = None) -> pd.DataFrame:
 
     out["pnl"] = out["stake"] * out["realised_return"]
     out["returned"] = out["stake"] * (1.0 + out["realised_return"])
-    # A pending bet contributes nothing to the balance, and NaN would poison the
+    # A pending position contributes nothing to the balance, and NaN would poison the
     # cumulative sum for every row after it.
     out["balance"] = (out["cash"].fillna(0.0) + out["pnl"].fillna(0.0)).cumsum()
     lead = ["when", "kind", "ref", "note", "cash", "pot", "mode", "f", "stake",
@@ -1147,6 +1147,6 @@ __all__ = [
     "proposition_rows", "run_stamp", "raw_probability", "capture", "slate_from_payloads", "backfill",
     "absorb", "purge", "active_runs", "pull_results", "load_results",
     "match_fixtures",
-    "settle", "roll_up", "record_bet", "bankroll",
+    "settle", "roll_up", "record_position", "statement",
     "open_account", "deposit", "withdraw", "balance",
 ]

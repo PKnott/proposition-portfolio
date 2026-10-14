@@ -296,7 +296,7 @@ def test_ladder_lines_is_what_the_workbook_writer_uses():
 
 # --- Pipeline --------------------------------------------------------------
 #
-# `staking.split` is gone; the pipeline from a filled form to a set of bets is
+# `staking.split` is gone; the pipeline from a filled form to a set of positions is
 # `portfolio.search`, and `tests/test_portfolio.py` covers it end to end. What
 # stays here is the part that is still about one proposition at a time.
 
@@ -455,7 +455,7 @@ def test_a_price_between_zero_and_one_still_raises(tmp_path):
 
 
 def test_book_survives_to_the_proposition_table():
-    """The output is a list of bets to go and place, so the price needs a source."""
+    """The output is a list of positions to go and take, so the price needs a source."""
     filled = pd.DataFrame({
         "sheet_code": ["A-01", "A-02", "A-03"], "label": ["one", "two", "three"],
         "p": WE_P, **_prices([1.80, np.nan, 1.55], [np.nan, 2.00, 1.55]),
