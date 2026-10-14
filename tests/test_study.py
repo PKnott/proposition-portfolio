@@ -178,7 +178,7 @@ def test_model_stamp_is_flat_and_fingerprints_content(tmp_path, monkeypatch):
 
     stamp = artifacts.model_stamp()
     assert set(stamp) == {"model_version", "model_fingerprint", "spec_hash", "scoring_hash",
-                          "git_sha", "git_dirty"}
+                          "git_sha", "git_dirty", "shots_shift"}
     assert all(not isinstance(v, (dict, list)) for v in stamp.values())
     # Same version, same files -> same fingerprint; change one byte -> different.
     monkeypatch.setattr(artifacts, "ARTIFACTS", tmp_path)

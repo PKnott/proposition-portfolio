@@ -127,6 +127,10 @@ def load_study_set(first_run: str = STUDY_FIRST_RUN, last_run: str | None = None
                for p in ledger.pending_slates(root)
                if (p / "propositions.parquet").exists()]
     props = pd.concat([held, *pending], ignore_index=True)
+    # Runs captured before the shots shift existed carry no `p_raw`: their `p`
+    # is the model's own value.
+    props["p_raw"] = (props["p_raw"].fillna(props["p"]) if "p_raw" in props
+                      else props["p"])
 
     runs = ledger.read_table("runs", root)
     excluded = set()
@@ -1009,6 +1013,19 @@ def _fold_plan(train: pd.DataFrame, test: pd.DataFrame, *, shots_k: float = 1.0,
     plan["all push"] = (push(w, p[te], all_k),
                         {"half push all, deflate all": np.full(te.sum(),
                                                                gap(pp_in, np.ones(len(s), bool)))})
+    # V3/V4: the production rule -- a logit shift on shots only, per league
+    # (partially pooled) or pooled -- fitted on the training slates' raw p.
+    trd = s[tr]
+    fit = shots_shift(trd, ridges=(30.0,))
+    lk = s["league"].astype(str).to_numpy()
+    by_league = np.array([fit["shift"].get(l, fit["pooled"]) for l in lk[te]])
+    pooled_c, _ = fit_logit_shift(y[tr & shots], p[tr & shots])
+    plan["shots shift by league"] = (
+        np.where(shots[te], expit(logit(p[te]) + by_league), p[te]),
+        {"shots shift by league, no deflation": np.zeros(te.sum())})
+    plan["shots shift pooled"] = (
+        np.where(shots[te], expit(logit(p[te]) + pooled_c), p[te]),
+        {"shots shift pooled, no deflation": np.zeros(te.sum())})
     plan["_deflation"] = {"deflate all": d_raw, "deflate others (shots pushed)": d_other,
                           "deflate all (shots pushed)": d_pooled}
     return plan
@@ -1353,6 +1370,108 @@ def leg_cap_summary(cr: pd.DataFrame, baseline: float = 0.15, n_boot: int = 5000
     return pd.DataFrame(rows)
 
 
+
+# --- 9. the production shots shift ----------------------------------------
+#
+# What `config.SHOTS_LOGIT_SHIFT` holds: one additive shift on the logit of every
+# shots line probability, per league, pulled towards the pooled shift by a ridge
+# penalty. A plain shift rather than ``a + b logit p`` because it scores as well
+# out of sample (0.5946 against 0.5955 log loss on R006-R022) with one number per
+# league instead of two.
+
+SHIFT_RIDGE_GRID: tuple[float, ...] = (0.0, 10.0, 30.0, 100.0, 300.0, 1000.0)
+
+
+def fit_logit_shift(y, p, levels=None, *, ridge: float = 0.0) -> tuple[float, np.ndarray]:
+    """``(pooled, per_level)`` shifts maximising likelihood of ``y`` under ``expit(logit p + c)``.
+
+    With `levels`, each level's shift is the pooled one plus an offset that the
+    ridge penalty ``ridge/2 * offset**2`` pulls back to zero -- the same partial
+    pooling `fit_recalibration` uses for contexts.
+    """
+    y = np.asarray(y, float)
+    x = logit(p)
+    lv = np.zeros(len(y), int) if levels is None else np.asarray(levels, int)
+    k = int(lv.max()) + 1
+
+    def loss(w):
+        e = x + w[0] + w[1:][lv]
+        q = expit(e)
+        r = q - y
+        g = np.empty_like(w)
+        g[0] = r.sum()
+        g[1:] = np.bincount(lv, weights=r, minlength=k) + ridge * w[1:]
+        return np.sum(np.logaddexp(0, e) - y * e) + 0.5 * ridge * np.sum(w[1:] ** 2), g
+
+    if levels is None:
+        w = minimize(loss, np.zeros(1 + k), jac=True, method="L-BFGS-B",
+                     bounds=[(None, None)] + [(0, 0)] * k).x
+    else:
+        w = minimize(loss, np.zeros(1 + k), jac=True, method="L-BFGS-B").x
+    return float(w[0]), w[0] + w[1:]
+
+
+def shots_shift(s: pd.DataFrame, *, group: str = "run_code", ridges=SHIFT_RIDGE_GRID) -> dict:
+    """The per-league shots shift for `config.SHOTS_LOGIT_SHIFT`, with its evidence.
+
+    Fitted on **raw** model probabilities (`p_raw`), so a refit after the shift
+    is live measures the model, not the model plus the last shift. The ridge is
+    chosen by leave-one-slate-out log loss. Returns the shifts, the pooled shift
+    (the default for leagues with no shots prices), the ridge, and the CV log
+    loss of raw, pooled and per-league.
+    """
+    sh = s[s["target"] == "shots"].reset_index(drop=True)
+    y = sh["y"].to_numpy()
+    p = (sh["p_raw"] if "p_raw" in sh else sh["p"]).to_numpy()
+    cat = pd.Categorical(sh["league"])
+    lv = cat.codes.astype(int)
+    groups = sh[group].astype(str).to_numpy()
+
+    def cv(ridge):
+        tot = 0.0
+        for g in np.unique(groups):
+            tr, te = groups != g, groups == g
+            pooled, per = fit_logit_shift(y[tr], p[tr], lv[tr], ridge=ridge)
+            tot += _ll(y[te], expit(logit(p[te]) + per[lv[te]])).sum()
+        return tot / len(y)
+
+    scores = {r: cv(r) for r in ridges}
+    best = min(scores, key=scores.get)
+    pooled, per = fit_logit_shift(y, p, lv, ridge=best)
+    raw_ll = float(_ll(y, p).mean())
+    pooled_cv = 0.0
+    for g in np.unique(groups):
+        tr, te = groups != g, groups == g
+        c, _ = fit_logit_shift(y[tr], p[tr])
+        pooled_cv += _ll(y[te], expit(logit(p[te]) + c)).sum()
+    return {"shift": {str(c): round(float(v), 3) for c, v in zip(cat.categories, per)},
+            "pooled": round(float(pooled), 3), "ridge": best,
+            "n": {str(c): int((lv == i).sum()) for i, c in enumerate(cat.categories)},
+            "cv_logloss": {"raw": raw_ll, "pooled": pooled_cv / len(y),
+                           "per_league": scores[best]},
+            "cv_by_ridge": scores}
+
+
+
+def shift_monitor(s: pd.DataFrame, by=("run_code", "league")) -> pd.DataFrame:
+    """Shots propositions priced *with* the shift live: raw model, shifted value, outcome.
+
+    One row per run and league, for runs where `p` differs from `p_raw` on shots
+    (i.e. captured after `SHOTS_LOGIT_SHIFT` went live). `gap_raw` and
+    `gap_shifted` are hit rate minus the mean of each: if the shift is right the
+    second sits near zero while the first stays positive. Empty until the first
+    run priced with the shift has been graded.
+    """
+    sh = s[(s["target"] == "shots") & ((s["p"] - s["p_raw"]).abs() > 1e-9)]
+    if sh.empty:
+        return pd.DataFrame(columns=[*by, "n", "hit_rate", "p_raw", "p", "gap_raw", "gap_shifted"])
+    g = sh.groupby(list(by), observed=True)
+    out = g.agg(n=("y", "size"), hit_rate=("y", "mean"), p_raw=("p_raw", "mean"), p=("p", "mean"))
+    out["gap_raw"] = out["hit_rate"] - out["p_raw"]
+    out["gap_shifted"] = out["hit_rate"] - out["p"]
+    return out.reset_index()
+
+
 __all__ = [
     "load_study_set", "run_models", "grade", "pair_frame", "rho_table", "placebo_correlation",
     "correlation_vs_config", "reliability_frame", "gap_table", "market_comparison",
@@ -1362,5 +1481,6 @@ __all__ = [
     "push", "select", "kelly_stakes", "slate_growth", "SLATE_CAP",
     "replay_slate", "portfolio_backtest", "portfolio_summary", "frontier_outcomes",
     "AS_RUN_SLATES", "triples_backtest", "triples_summary", "LEG_CAPS",
-    "leg_cap_backtest", "leg_cap_replay", "leg_cap_summary", "push_deflate_backtest", "backtest_summary",
+    "leg_cap_backtest", "leg_cap_replay", "leg_cap_summary", "fit_logit_shift",
+    "shots_shift", "shift_monitor", "push_deflate_backtest", "backtest_summary",
 ]

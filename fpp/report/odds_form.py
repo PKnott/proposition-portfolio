@@ -76,7 +76,7 @@ def _fixture_index(props: pd.DataFrame) -> pd.DataFrame:
 # nothing that reads either one sees it.
 STAMP_ROW = 4
 STAMP_FIELDS = ("model_version", "model_fingerprint", "spec_hash", "scoring_hash",
-                "git_sha", "git_dirty")
+                "git_sha", "git_dirty", "shots_shift")
 
 
 def _write_contents(ws, index: pd.DataFrame, source: str | None,

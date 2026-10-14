@@ -243,6 +243,10 @@ def propositions(preds: pd.DataFrame, dispersion: dict | None = None) -> pd.Data
                         "line": float(line),
                         "label": proposition_label(target, team, line),
                         "p": float(mk[target][f"{scope}_over_{line}"]),
+                        # The model's own value before any calibration shift;
+                        # equal to `p` for every target but shots.
+                        "p_raw": float(mk[target].get(f"{scope}_over_{line}_raw",
+                                                      mk[target][f"{scope}_over_{line}"])),
                     })
     return pd.DataFrame(rows)
 

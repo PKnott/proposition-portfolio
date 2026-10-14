@@ -175,12 +175,15 @@ def model_stamp(version: str = "current") -> dict[str, str | bool | None]:
     * `model_fingerprint` -- `artifact_fingerprint`, the content of that version.
     * `spec_hash` / `scoring_hash` -- the feature and scoring definitions in code.
     * `git_sha` / `git_dirty` -- the code that turned artifacts into probabilities.
+    * `shots_shift` -- the calibration shift applied to shots lines, per league.
 
     Flat rather than nested so it drops straight into `run.json` and from there
     into the `runs` table as ordinary columns.
     """
     if version == "current":
         version = read_manifest().get("current") or default_version()
+    from .config import SHOTS_LOGIT_SHIFT, SHOTS_LOGIT_SHIFT_DEFAULT
+
     return {
         "model_version": version,
         "model_fingerprint": artifact_fingerprint(version),
@@ -188,6 +191,10 @@ def model_stamp(version: str = "current") -> dict[str, str | bool | None]:
         "scoring_hash": scoring_hash(),
         "git_sha": _git_sha(),
         "git_dirty": _git_dirty(),
+        # The calibration layer on top of the model, as JSON so it stays one flat
+        # field: per-league shots shifts, with "*" the default for the rest.
+        "shots_shift": json.dumps({**SHOTS_LOGIT_SHIFT, "*": SHOTS_LOGIT_SHIFT_DEFAULT},
+                                  sort_keys=True),
     }
 
 

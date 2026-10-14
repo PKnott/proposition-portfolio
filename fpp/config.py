@@ -521,6 +521,29 @@ TRIPLE_KEEP = 8
 # largest that ever worked.
 EXPORT_MAX = 2_500
 
+# Calibration shift on shots line probabilities, per league (logit scale).
+#
+# The shots model runs low: on R006-R022 shots propositions landed 10.7pp more
+# often than predicted [+5.6, +15.8], in every probability bin, in both leagues
+# where shots are priced. `report.markets.fixture_markets` adds this shift to the
+# logit of every team shots line probability -- so the predictions workbook, the
+# odds form and the Edge Book all carry the corrected number -- and keeps the
+# model's own value beside it as `..._raw`, which travels to the ledger as `p_raw`.
+#
+# Fitted by `study.shots_shift` on raw probabilities: one shift per league,
+# partially pooled (ridge chosen by leave-one-slate-out log loss: 30), 1,401
+# propositions over 12 slates. Shots log loss out of slate: raw 0.6175, one
+# pooled shift 0.5946, per league 0.5925. At p = 0.45 the shift reads +9.7pp
+# (Prem) and +17.9pp (Serie). The match bootstrap puts the pooled push at roughly
+# +7 to +19pp at that point, so the size is estimated, not known.
+#
+# Leagues with no shots prices take the pooled value; it changes what the
+# workbook shows there and nothing else. Refit from `07_Analysis` as slates
+# accumulate, on `p_raw` -- never on the shifted value. Set both to zero to
+# switch it off.
+SHOTS_LOGIT_SHIFT: dict[str, float] = {"Prem": 0.389, "Serie": 0.728}
+SHOTS_LOGIT_SHIFT_DEFAULT = 0.558
+
 # First run the correlation and calibration study (`fpp.study`) reads.
 #
 # Earlier runs were priced by a superseded model: the ledger excludes R001-R005
@@ -811,6 +834,8 @@ __all__ = [
     "TRIPLES_ENABLED",
     "TRIPLE_KEEP",
     "STUDY_FIRST_RUN",
+    "SHOTS_LOGIT_SHIFT",
+    "SHOTS_LOGIT_SHIFT_DEFAULT",
     "L_GRID",
     "ALPHA_GRID",
     "PAIR_BLOCKS",

@@ -198,10 +198,13 @@ def _mean_from_survival(surv: np.ndarray | None) -> float | None:
 
 def _line_record(target: str, team: str, scope: str, line: float, mk: dict, base) -> dict:
     p = float(mk[target][f"{scope}_over_{line}"])
+    raw = mk[target].get(f"{scope}_over_{line}_raw")
     return {
         "line": float(line),
         "label": proposition_label(target, team, line),
         "p": _p(p),
+        # Present only where a calibration shift moved `p` (shots).
+        **({"p_raw": _p(float(raw))} if raw is not None else {}),
         "odds": _o(safe_odds(p)),
         "league_avg": _p(base.over_rate(target, scope, line)) if base is not None else None,
     }

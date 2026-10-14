@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ..metrics import convolve_pmf, over_prob, pmf_for
-from ..config import season_sort_key
+from ..config import SHOTS_LOGIT_SHIFT, SHOTS_LOGIT_SHIFT_DEFAULT, season_sort_key
 from ..spec import STAT_BY_KEY, TARGETS, target_spec
 
 GOALS_MATRIX_MAX = 6  # rows/cols 0..5 plus a "6+" bucket
@@ -194,8 +194,43 @@ def count_markets(target: str, mu_home: float, mu_away: float, dispersion: float
     return out
 
 
+def shots_shift(league_key: str | None) -> float:
+    """The calibration shift for one league's shots lines (`config.SHOTS_LOGIT_SHIFT`)."""
+    return float(SHOTS_LOGIT_SHIFT.get(str(league_key), SHOTS_LOGIT_SHIFT_DEFAULT))
+
+
+def shift_probability(p: float, shift: float) -> float:
+    """``expit(logit(p) + shift)``, leaving 0 and 1 where they are."""
+    if shift == 0.0 or p <= 0.0 or p >= 1.0:
+        return float(p)
+    return float(1.0 / (1.0 + np.exp(-(np.log(p / (1.0 - p)) + shift))))
+
+
+def calibrate_shots(mk: dict, league_key: str | None) -> dict:
+    """Apply the shots calibration to the team ladders, keeping the raw values.
+
+    Only the per-team ``home_over_*`` / ``away_over_*`` probabilities move:
+    those are what the shift was fitted on and the only shots lines a portfolio
+    can hold. Each raw value is kept as ``<key>_raw``, and ``shift`` records what
+    was applied. The pmfs, means and match-total lines are the model's own.
+    """
+    c = shots_shift(league_key)
+    mk["shift"] = c
+    for scope in ("home", "away"):
+        for line in mk[f"{scope}_lines"]:
+            key = f"{scope}_over_{line}"
+            mk[f"{key}_raw"] = mk[key]
+            mk[key] = shift_probability(mk[key], c)
+    return mk
+
+
 def fixture_markets(row: pd.Series, dispersion: dict[str, dict[str, float]] | None = None) -> dict:
-    """Every market for one fixture, across all four target families."""
+    """Every market for one fixture, across all four target families.
+
+    Shots team ladders are calibrated here (`calibrate_shots`), so every
+    consumer -- workbook, odds form, Edge Book -- reads the same corrected
+    probability, with the model's raw value beside it.
+    """
     out = {"goals": goal_markets(float(row["goals_home"]), float(row["goals_away"]))}
     for t in TARGETS:
         if t == "goals":
@@ -203,6 +238,8 @@ def fixture_markets(row: pd.Series, dispersion: dict[str, dict[str, float]] | No
         d = (dispersion or {}).get(t, {})
         disp = d.get(row["league_key"]) if isinstance(d, dict) else d
         out[t] = count_markets(t, float(row[f"{t}_home"]), float(row[f"{t}_away"]), disp)
+    if "shots" in out:
+        calibrate_shots(out["shots"], row.get("league_key"))
     return out
 
 
@@ -318,5 +355,6 @@ __all__ = [
     "safe_odds", "team_pmf", "dynamic_team_lines", "ladder_lines", "scoreline_matrix",
     "matrix_labels", "goal_markets",
     "count_markets", "fixture_markets", "league_baselines", "LeagueBaseline",
+    "shots_shift", "shift_probability", "calibrate_shots",
     "GOALS_MATRIX_MAX", "LADDER_LINES",
 ]

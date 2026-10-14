@@ -338,6 +338,29 @@ def run_stamp(source: str | None = None) -> dict:
     return {**model_stamp(), "stamp_origin": "capture"}
 
 
+def raw_probability(props: pd.DataFrame, shots_shift: str | None) -> np.ndarray:
+    """The model's own probability for each row, undoing the stamped shots shift.
+
+    `p` on the odds form is what the portfolio used. Where the form's stamp
+    records a shots shift, shots rows are mapped back with
+    ``expit(logit(p) - shift[league])``; every other row, and every row of a form
+    stamped before the shift existed, is its own raw value. Recording both is
+    what lets the shift be refitted on the model, not on the model plus the
+    last shift.
+    """
+    p = props["p"].to_numpy(dtype=float).copy()
+    if not shots_shift:
+        return p
+    shifts = json.loads(shots_shift) if isinstance(shots_shift, str) else dict(shots_shift)
+    default = float(shifts.get("*", 0.0))
+    is_shots = (props["target"].astype(str) == "shots").to_numpy()
+    c = np.array([float(shifts.get(str(lk), default)) for lk in props["league_key"]])
+    inside = is_shots & (p > 0) & (p < 1) & (c != 0)
+    x = np.log(p[inside] / (1 - p[inside])) - c[inside]
+    p[inside] = 1.0 / (1.0 + np.exp(-x))
+    return p
+
+
 def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
             run_code: str | None = None, root: Path | None = None) -> Slate:
     """Write one run into the inbox, and hand back the code it was given.
@@ -355,6 +378,8 @@ def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
     ids = {(rec["event"], rec["proposition"]): rec["id"]
            for rec in payload.get("propositions", [])}
     props = proposition_rows(filled, run_code, ids)
+    stamp = run_stamp(source or payload.get("source_odds_file"))
+    props["p_raw"] = raw_probability(props, stamp.get("shots_shift"))
     # Legs point at pick ids; the ledger keys on the fixture. `props` holds both
     # columns, so the crosswalk is the frame itself rather than a second parse.
     picked = props[props["prop_id"].notna()]
@@ -382,7 +407,7 @@ def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
         # Which model priced this run. Before 14 Oct 2026 nothing recorded it, and
         # working out which slates came from the current model meant reading git
         # history and timestamps. See `run_stamp`.
-        **run_stamp(source or payload.get("source_odds_file")),
+        **stamp,
         **{f"n_{k}": v for k, v in (payload.get("counts") or {}).items()},
     }
     (dest / "run.json").write_text(json.dumps(run, indent=1), encoding="utf-8")
@@ -1119,7 +1144,7 @@ __all__ = [
     "TABLES", "STAKE_MODES", "CUSTOM", "LEG_AGGREGATES", "Slate",
     "store_dir", "table_path", "read_table", "write_table",
     "parse_label", "league_of", "prop_key", "next_run_code", "pending_slates",
-    "proposition_rows", "run_stamp", "capture", "slate_from_payloads", "backfill",
+    "proposition_rows", "run_stamp", "raw_probability", "capture", "slate_from_payloads", "backfill",
     "absorb", "purge", "active_runs", "pull_results", "load_results",
     "match_fixtures",
     "settle", "roll_up", "record_bet", "bankroll",
