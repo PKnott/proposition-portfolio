@@ -79,7 +79,7 @@ neither too extreme nor too timid.
 | **Sharpe² = Σ Sᵢ²** | Under edge-aware weights, portfolio Sharpe equals the square root of the summed squared leg Sharpes. This is an algebraic identity, so it does not depend on the sample. It was verified to 1e-16 on real slates and is pinned by a test. The result gives one scalar, additive over legs, that orders every possible selection. |
 | **The protective stake ≈ 0.111 × Kelly** | The 4,000-path drawdown simulation turned out to compute a near-fixed fraction of Kelly (r = 0.998, worst residual 6.2%). A risk appetite that had been implicit in three configuration constants became one visible number. |
 | **The old stake split cost ~39% of growth** | Minimum-variance weighting ignored edge. On one real book it put 25.5% of the stake on the worst position in it and 4.3% on the best. |
-| **Same-match correlation +0.455; opposite teams −0.185** | Measured over 1,438 settled same-match pairs, against a placebo of −0.013 for pairs drawn from different matches. This led to pricing two positions per match with a correlated joint distribution instead of banning them. |
+| **Same-match correlation +0.455; opposite teams −0.185** | Measured over 1,438 settled same-match pairs, against a placebo of −0.013 for pairs drawn from different matches. This led to pricing two positions per match with a correlated joint distribution instead of banning them. Re-measured on 14 slates (qualified propositions, clustered by match): same stat 0.60 / 0.39 / 0.23 by line gap, different stat 0.17, opposite teams ≈0. Config now uses these. |
 
 The study also caught an error in its own method. A sign flip in the correlation
 model had overstated one result by 35%, and the correction is written up

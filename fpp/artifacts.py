@@ -135,6 +135,62 @@ def write_provenance(target: str, version: str, *, n_rows: int, data_hash: str, 
     }, version)
 
 
+# The files that decide what the model predicts. `cv` is diagnostics and
+# `provenance` is a record about the others, so neither is part of the identity.
+BEHAVIOUR_STAGES = ("window", "features", "params")
+
+
+def artifact_fingerprint(version: str = "current", targets: tuple[str, ...] = TARGETS) -> str:
+    """A short hash of every behaviour-deciding artifact file in one version.
+
+    The version name says which directory was loaded; this says what was *in* it.
+    Two runs with the same fingerprint scored with byte-identical windows,
+    features and parameters, even if a version directory was overwritten in place.
+    """
+    if version == "current":
+        version = read_manifest().get("current") or default_version()
+    h = hashlib.sha256()
+    for target in targets:
+        for stage in BEHAVIOUR_STAGES:
+            f = artifact_dir(target, version) / f"{stage}.json"
+            h.update(f"{target}/{stage}\0".encode())
+            h.update(f.read_bytes() if f.exists() else b"<missing>")
+    return h.hexdigest()[:12]
+
+
+def _git_dirty(path: str = "fpp") -> bool | None:
+    """Whether `path` has uncommitted changes -- code the git sha does not describe."""
+    try:
+        r = subprocess.run(["git", "status", "--porcelain", "--", path],
+                           capture_output=True, text=True, timeout=5)
+        return bool(r.stdout.strip()) if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def model_stamp(version: str = "current") -> dict[str, str | bool | None]:
+    """Which model is about to price something, as flat fields for a run record.
+
+    * `model_version` -- the artifact version loaded (`manifest.json` `current`).
+    * `model_fingerprint` -- `artifact_fingerprint`, the content of that version.
+    * `spec_hash` / `scoring_hash` -- the feature and scoring definitions in code.
+    * `git_sha` / `git_dirty` -- the code that turned artifacts into probabilities.
+
+    Flat rather than nested so it drops straight into `run.json` and from there
+    into the `runs` table as ordinary columns.
+    """
+    if version == "current":
+        version = read_manifest().get("current") or default_version()
+    return {
+        "model_version": version,
+        "model_fingerprint": artifact_fingerprint(version),
+        "spec_hash": spec_hash(),
+        "scoring_hash": scoring_hash(),
+        "git_sha": _git_sha(),
+        "git_dirty": _git_dirty(),
+    }
+
+
 def freeze(version: str | None = None, targets: tuple[str, ...] = TARGETS) -> str:
     """Mark a version current, after checking every target family is complete."""
     version = version or default_version()
@@ -202,7 +258,7 @@ class RunContext:
 
 
 __all__ = [
-    "STAGES", "spec_hash", "default_version", "working_version", "orphan_versions",
+    "STAGES", "BEHAVIOUR_STAGES", "spec_hash", "artifact_fingerprint", "model_stamp", "default_version", "working_version", "orphan_versions",
     "read_manifest", "set_current", "artifact_dir", "save_artifact", "load_artifact",
     "write_provenance", "freeze", "RunContext",
 ]

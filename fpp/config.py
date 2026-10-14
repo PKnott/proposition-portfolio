@@ -472,10 +472,11 @@ CAP_RELIEF = 2.0
 #
 # The one-per-event rule was adopted on the assumption that same-match
 # propositions are too correlated to count separately. Measured over 1,438
-# same-match pairs across R006-R007, they are correlated but far from duplicated,
-# and propositions on *opposite* teams are negatively correlated -- worth more
-# than an unrelated leg, not less. A placebo pairing propositions from different
-# matches returns -0.013, so the estimator is clean.
+# same-match pairs across R006-R007, they are correlated but far from duplicated.
+# Propositions on *opposite* teams looked negatively correlated on those two
+# slates; on R006-R022 they are not (see `PAIR_CORRELATION`), so an opposite-team
+# pair is priced as two independent legs -- no worse than an unrelated leg, and
+# no better.
 #
 # `PAIR_KEEP` bounds how many pairs survive per event after the (capacity,
 # normaliser) frontier. Eight reaches the full available capacity on both settled
@@ -483,6 +484,32 @@ CAP_RELIEF = 2.0
 # `portfolio.EXHAUSTIVE_MAX`, so small midweek slates still enumerate provably.
 PAIRS_ENABLED = True
 PAIR_KEEP = 8
+
+# Three legs from one match (`portfolio.event_options`). Switched on 14 Oct 2026.
+#
+# The rulebook, set 14 Oct 2026, so a triple is two legs on one team and one on
+# the other:
+#   1. never two legs on the same team and the same stat (those run 0.6-0.8);
+#   2. opposite-team pairs are always allowed (measured at about zero);
+#   3. never all three on one team.
+# The same-team pair inside a triple may be any two different stats, shots x SOT
+# and goals x SOT included; their correlation is priced, not banned.
+#
+# A triple's joint outcome is built from its three pairwise correlations with no
+# further three-way term (`portfolio.block_joint`). At the correlations allowed
+# here -- 0.17 within a team, 0 across -- that is a mild assumption, but it is
+# one.
+#
+# Evidence for switching on: 13 slates (R006-R022 as run) replayed through the
+# builder with triples off and on. The 06 pick's bankroll went x1.56 -> x1.74
+# (x1.12, slate-bootstrap range x0.95-x1.38): 5 slates better, 2 worse, 6
+# identical because no valid triple was offered. The whole frontier's median
+# realised return was unchanged (+0.002). Encouraging, not proven; triples are
+# rare -- 0 to 36 options a slate -- because one team must qualify on two stats
+# and the other team on one. The Edge Book payload and `ledger.capture` are
+# width-agnostic and pinned by `tests/test_triples.py`.
+TRIPLES_ENABLED = True
+TRIPLE_KEEP = 8
 
 # Ceiling on how many undominated portfolios are exported to the Edge Book.
 #
@@ -494,23 +521,47 @@ PAIR_KEEP = 8
 # largest that ever worked.
 EXPORT_MAX = 2_500
 
+# First run the correlation and calibration study (`fpp.study`) reads.
+#
+# Earlier runs were priced by a superseded model: the ledger excludes R001-R005
+# for that reason, and the cutover sits between R005 (28 Aug 22:33 UTC) and
+# R006 (28 Aug 23:54 UTC). No commit since git history began (11 Sept) has
+# changed how `p` is produced, so every run from here on is the current model.
+# Move this forward whenever the model, its artifacts or its features change.
+STUDY_FIRST_RUN = "R006"
+
 # Correlation of two propositions in the same match, by what they share.
 #
-# Provenance: 1,438 same-match pairs, R006-R007, as the mean of z_i*z_j with
-# z = (won - p)/sqrt(p(1-p)). Standard errors run 0.04-0.09 and every band
-# excludes zero. Re-estimated by `analysis.pair_correlation` as slates
-# accumulate -- five numbers from two weeks is where this starts, not where it
-# should stay.
+# Provenance: R006-R022 (14 slates, deduplicated), re-measured 14 Oct 2026 by
+# `study.correlation_vs_config` as the mean of z_i*z_j with z = (won - p) /
+# sqrt(p(1-p)). Intervals are 95% and clustered by match, because pairs on one
+# match share propositions and are not independent evidence.
+#
+# **Measured on qualified propositions** -- the ones the builder actually pairs.
+# Across every priced proposition the same-stat values run higher (0.79 / 0.59 /
+# 0.34), because the priced set is full of near-duplicate adjacent lines that
+# never both qualify; that is not the population these numbers price.
+#
+# The first estimate (R006-R007, 1,438 pairs) was 0.63 / 0.40 / 0.30 / 0.267 /
+# -0.185. Its same-stat values held; the other two did not.
 #
 # Same team and same stat is graded by how far apart the two lines are, because
-# the headline 0.455 averages over a real gradient: adjacent lines are nearly the
-# same bet, distant ones much less so.
+# adjacent lines are nearly the same bet and distant ones much less so.
+#
+# `same_team_diff_stat` is one number over real structure. Across all priced
+# propositions: shots x SOT 0.30, goals x SOT 0.24, shots x corners 0.19,
+# SOT x corners 0.10, goals x shots 0.07, goals x corners -0.05 (each about
+# +/-0.1). A per-stat-pair split is the obvious refinement once each cell has the
+# matches to support it.
 PAIR_CORRELATION: dict[str, float] = {
-    "same_team_same_stat_adjacent": 0.630,   # lines <= 1 apart
-    "same_team_same_stat_near": 0.400,       # lines ~2 apart
-    "same_team_same_stat_far": 0.300,        # lines 3+ apart
-    "same_team_diff_stat": 0.267,
-    "opposite_teams": -0.185,
+    "same_team_same_stat_adjacent": 0.60,    # lines <= 1 apart; [0.51, 0.69], 194 matches
+    "same_team_same_stat_near": 0.39,        # lines ~2 apart;   [0.31, 0.47], 173 matches
+    "same_team_same_stat_far": 0.23,         # lines 3+ apart;   [0.14, 0.33], 135 matches
+    "same_team_diff_stat": 0.17,             # [0.06, 0.28], 98 matches; 0.15 [0.10, 0.21] all priced
+    # About zero in both samples: +0.04 [-0.10, +0.19] qualified, -0.00
+    # [-0.05, +0.05] all priced, and every stat pair's interval holds zero bar
+    # goals x SOT (+0.11). The -0.185 "hedge" did not survive the data.
+    "opposite_teams": 0.0,
 }
 
 # --- Search grids ---------------------------------------------------------
@@ -757,6 +808,9 @@ __all__ = [
     "PAIR_KEEP",
     "EXPORT_MAX",
     "PAIR_CORRELATION",
+    "TRIPLES_ENABLED",
+    "TRIPLE_KEEP",
+    "STUDY_FIRST_RUN",
     "L_GRID",
     "ALPHA_GRID",
     "PAIR_BLOCKS",

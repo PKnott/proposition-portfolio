@@ -70,7 +70,17 @@ def _fixture_index(props: pd.DataFrame) -> pd.DataFrame:
     return idx.join(counts, on="sheet_code")
 
 
-def _write_contents(ws, index: pd.DataFrame, source: str | None) -> None:
+# Row 4 of the Contents sheet: which model priced the form. Label in A, then the
+# fields of `artifacts.model_stamp` in this order across B onwards. Row 4 sits
+# between the header block (rows 2-3) and the fixture table (row 5 on), so
+# nothing that reads either one sees it.
+STAMP_ROW = 4
+STAMP_FIELDS = ("model_version", "model_fingerprint", "spec_hash", "scoring_hash",
+                "git_sha", "git_dirty")
+
+
+def _write_contents(ws, index: pd.DataFrame, source: str | None,
+                    stamp: dict | None = None) -> None:
     ws.merge_cells("A1:F1")
     t = ws.cell(1, 1)
     t.value = (f"Odds entry - {len(index)} fixtures, "
@@ -85,6 +95,12 @@ def _write_contents(ws, index: pd.DataFrame, source: str | None) -> None:
     ws.cell(3, 1).value = "Generated"
     ws.cell(3, 1).font = FONT_H
     ws.cell(3, 2).value = dt.date.today().isoformat()
+    if stamp:
+        ws.cell(STAMP_ROW, 1).value = "Model"
+        ws.cell(STAMP_ROW, 1).font = FONT_H
+        for j, k in enumerate(STAMP_FIELDS):
+            v = stamp.get(k)
+            ws.cell(STAMP_ROW, 2 + j).value = None if v is None else str(v)
 
     head = 5
     for j, h in enumerate(["Sheet", "Date", "League", "Home", "Away", "To price"]):
@@ -171,12 +187,20 @@ def _write_fixture(ws, code: str, rows: pd.DataFrame) -> None:
 
 
 def write_odds_form(props: pd.DataFrame, out_path: Path | None = None,
-                    source: str | None = None) -> Path:
+                    source: str | None = None, stamp: dict | None = None) -> Path:
     """Write the blank capture workbook. ``props`` is already filtered and sorted.
 
     Filtering lives in `staking.qualifying` rather than here, so the threshold is
     one named constant in one place and this function stays a renderer.
+
+    `stamp` records which model priced the form (`artifacts.model_stamp`); it
+    defaults to the current one, which is what `05_Run` has just loaded. The form
+    is the only file that travels from prediction to capture, so it is the one
+    that has to carry it.
     """
+    if stamp is None:
+        from ..artifacts import model_stamp
+        stamp = model_stamp()
     from ..paths import OUTPUTS, publish
 
     out_path = Path(out_path) if out_path else OUTPUTS / f"odds_input_{dt.date.today().isoformat()}.xlsx"
@@ -193,7 +217,7 @@ def write_odds_form(props: pd.DataFrame, out_path: Path | None = None,
     index = _fixture_index(props)
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         pd.DataFrame().to_excel(writer, sheet_name="Contents", index=False)
-        _write_contents(writer.book["Contents"], index, source)
+        _write_contents(writer.book["Contents"], index, source, stamp)
         for code, rows in props.groupby("sheet_code", sort=False):
             pd.DataFrame().to_excel(writer, sheet_name=code, index=False)
             _write_fixture(writer.book[code], code, rows)
@@ -216,11 +240,17 @@ def form_meta(path: Path) -> dict:
     wb = openpyxl.load_workbook(Path(path), read_only=True)
     cs = wb["Contents"] if "Contents" in wb.sheetnames else None
     fixtures = [s for s in wb.sheetnames if s not in ("Contents", "Info")]
+    stamped = bool(cs) and cs.cell(STAMP_ROW, 1).value == "Model"
+    model = ({k: cs.cell(STAMP_ROW, 2 + j).value for j, k in enumerate(STAMP_FIELDS)}
+             if stamped else None)
     return {
         "path": Path(path),
         "source": (cs.cell(2, 2).value if cs else None),
         "generated": (str(cs.cell(3, 2).value)[:10] if cs and cs.cell(3, 2).value else None),
         "fixtures": len(fixtures),
+        # None on forms written before stamping existed -- not "unknown model",
+        # just "this form does not say".
+        "model": model,
     }
 
 

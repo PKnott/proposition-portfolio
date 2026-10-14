@@ -307,6 +307,37 @@ def _frontier_from_payload(payload: dict, run_code: str,
     return portfolios, legs
 
 
+def _form_path(source: str | None) -> Path | None:
+    """Where the odds form named `source` lives now: Outputs, or its archive."""
+    from .paths import OUTPUTS
+
+    if not source:
+        return None
+    for cand in (OUTPUTS / source, OUTPUTS / "Archive" / "odds" / source):
+        if cand.exists():
+            return cand
+    return None
+
+
+def run_stamp(source: str | None = None) -> dict:
+    """The model fields for a run record, and where they came from.
+
+    Read off the odds form when it carries them -- that is the model that priced
+    the propositions. A form written before stamping existed, or one that cannot
+    be found, falls back to the model current *now*, and says so in
+    `stamp_origin`, because that is an assumption about the past rather than a
+    record of it.
+    """
+    from .artifacts import model_stamp
+    from .report.odds_form import form_meta
+
+    path = _form_path(source)
+    model = form_meta(path).get("model") if path is not None else None
+    if model:
+        return {**model, "stamp_origin": "form"}
+    return {**model_stamp(), "stamp_origin": "capture"}
+
+
 def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
             run_code: str | None = None, root: Path | None = None) -> Slate:
     """Write one run into the inbox, and hand back the code it was given.
@@ -348,6 +379,10 @@ def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
         "max_legs": payload.get("max_legs"),
         "origin": "capture",
         "captured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        # Which model priced this run. Before 14 Oct 2026 nothing recorded it, and
+        # working out which slates came from the current model meant reading git
+        # history and timestamps. See `run_stamp`.
+        **run_stamp(source or payload.get("source_odds_file")),
         **{f"n_{k}": v for k, v in (payload.get("counts") or {}).items()},
     }
     (dest / "run.json").write_text(json.dumps(run, indent=1), encoding="utf-8")
@@ -1084,7 +1119,7 @@ __all__ = [
     "TABLES", "STAKE_MODES", "CUSTOM", "LEG_AGGREGATES", "Slate",
     "store_dir", "table_path", "read_table", "write_table",
     "parse_label", "league_of", "prop_key", "next_run_code", "pending_slates",
-    "proposition_rows", "capture", "slate_from_payloads", "backfill",
+    "proposition_rows", "run_stamp", "capture", "slate_from_payloads", "backfill",
     "absorb", "purge", "active_runs", "pull_results", "load_results",
     "match_fixtures",
     "settle", "roll_up", "record_bet", "bankroll",

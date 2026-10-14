@@ -77,7 +77,7 @@ from .config import (
     PESSIMISM_B,
     SLATE_TAU,
 )
-from .portfolio import GRID, joint_both, return_pmf
+from .portfolio import GRID, block_joint, joint_both, return_pmf
 
 
 def suggested_fraction(f_drawdown: float, pay: np.ndarray, p: np.ndarray, *,
@@ -163,6 +163,11 @@ def ruin_prob(p: np.ndarray, rho: np.ndarray | None = None) -> np.ndarray:
     p = np.asarray(p, dtype=float)
     if rho is None:
         return np.prod(np.where(p > 0, 1.0 - p, 1.0), axis=1)
+    if np.ndim(rho) == 3:
+        # Width-3 blocks: P(no leg lands) is outcome 0 of each block's joint.
+        P = p.reshape(len(p), -1, 3)
+        J = block_joint(P, np.asarray(rho, dtype=float))
+        return np.prod(np.where((P > 0).any(axis=-1), J[..., 0], 1.0), axis=1)
     p1, p2 = p[:, 0::2], p[:, 1::2]
     both = joint_both(p1, p2, rho)
     none = 1.0 - p1 - p2 + both                 # P00 for the block
@@ -397,6 +402,14 @@ def sweep_prob(p: np.ndarray, rho: np.ndarray | None = None) -> np.ndarray:
     p = np.asarray(p, dtype=float)
     if rho is None:
         return np.prod(np.where(p > 0, p, 1.0), axis=1)
+    if np.ndim(rho) == 3:
+        # Width-3 blocks: the outcome where exactly the live legs land.
+        P = p.reshape(len(p), -1, 3)
+        J = block_joint(P, np.asarray(rho, dtype=float))
+        live = (P > 0).astype(int)
+        k = live[..., 0] + 2 * live[..., 1] + 4 * live[..., 2]
+        hit = np.take_along_axis(J, k[..., None], axis=-1)[..., 0]
+        return np.prod(np.where(live.any(axis=-1), hit, 1.0), axis=1)
     p1, p2 = p[:, 0::2], p[:, 1::2]
     both = joint_both(p1, p2, rho)
     # A block holding one proposition sweeps when that one lands.

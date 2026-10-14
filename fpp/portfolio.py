@@ -21,7 +21,8 @@ which of them is worth the most.
 
 The rules
 ---------
-* At most two propositions per event, and a pair is priced with its correlation.
+* At most two propositions per event -- three with `TRIPLES_ENABLED`, under its
+  rulebook -- and a pair or triple is priced with its correlation.
   Each event offers every qualifying proposition on its own plus, with
   `PAIRS_ENABLED`, up to `PAIR_KEEP` two-proposition combinations (see
   `event_options`). Two propositions from the same match are correlated, so a
@@ -29,12 +30,12 @@ The rules
   (clamped to the Frechet bounds), and its covariance term enters the variance.
   Different events are treated as independent.
 
-  The correlations were measured over 1,438 same-match pairs from the first two
-  settled slates, an early sample to be re-estimated as more slates settle:
-  +0.455 for the same team's same stat, +0.267 for its different stat, and
-  **-0.185 for opposite teams**, against a -0.013 placebo across matches. So the
-  correlation is real but far from duplication, and a hedged cross-team pair is
-  worth more than an unrelated leg -- about 1.3x capacity over one per event.
+  The correlations were first measured over 1,438 same-match pairs from two
+  settled slates, then re-measured on R006-R022 (see `config.PAIR_CORRELATION`):
+  0.60 / 0.39 / 0.23 for the same team's same stat by line gap, 0.17 for its
+  different stat, and **about zero for opposite teams** -- the -0.185 "hedge" the
+  first sample showed did not hold. So same-team correlation is real but far
+  from duplication, and an opposite-team pair is priced as two independent legs.
 * Events may be skipped. A portfolio is any non-empty selection of events with
   one option -- a single proposition or a priced pair -- chosen from each.
 * Only propositions with ``e >= 1`` are eligible, and within an event only those
@@ -132,6 +133,8 @@ from .config import (
     PAIR_CORRELATION,
     PAIR_KEEP,
     PAIRS_ENABLED,
+    TRIPLE_KEEP,
+    TRIPLES_ENABLED,
 )
 from .staking import (
     P_CLAMP,
@@ -311,6 +314,13 @@ class Options:
     o2: tuple[np.ndarray, ...] = ()
     rho: tuple[np.ndarray, ...] = ()    # the pair's correlation, 0 for a single
     members: tuple[tuple[tuple[int, ...], ...], ...] = ()   # [event][option] -> prop rows
+    # Third slot, for triples (`config.TRIPLES_ENABLED`). Zero wherever the option
+    # holds fewer than three. `rho` is then slot 1 x slot 2; these are 1 x 3 and
+    # 2 x 3.
+    p3: tuple[np.ndarray, ...] = ()
+    o3: tuple[np.ndarray, ...] = ()
+    rho13: tuple[np.ndarray, ...] = ()
+    rho23: tuple[np.ndarray, ...] = ()
     n_events: int = field(init=False)
 
     def __post_init__(self) -> None:
@@ -325,6 +335,9 @@ class Options:
         if not self.members:
             object.__setattr__(self, "members", tuple(
                 tuple((i,) for i in range(len(x))) for x in self.p))
+        for name in ("p3", "o3", "rho13", "rho23"):
+            if not getattr(self, name):
+                object.__setattr__(self, name, tuple(np.zeros_like(x) for x in self.p))
 
     @property
     def sizes(self) -> np.ndarray:
@@ -333,6 +346,16 @@ class Options:
     @property
     def has_pairs(self) -> bool:
         return any(bool((x > 0).any()) for x in self.p2)
+
+    @property
+    def width(self) -> int:
+        """Slots per event: 3 if any option is a triple, else 2.
+
+        Two is the layout everything has always used; three appears only when a
+        triple was actually offered, so a slate without one scores through the
+        pair code bit for bit.
+        """
+        return 3 if any(bool((x > 0).any()) for x in self.p3) else 2
 
     def min_legs_for(self, leg_var: int) -> int:
         """The leg floor sitting ``leg_var`` events below everything on offer.
@@ -391,9 +414,9 @@ def pair_rho(a: pd.Series, b: pd.Series) -> float:
     """The measured correlation between two propositions in the same match.
 
     Graded by what they share, from `config.PAIR_CORRELATION`. Same team and same
-    stat is graded again by how far apart the two lines are, because the headline
-    0.455 averages over a real gradient: adjacent lines are nearly the same bet at
-    0.63, three or more apart much less so at 0.30.
+    stat is graded again by how far apart the two lines are, because adjacent
+    lines are nearly the same bet (0.60) and three or more apart much less so
+    (0.23).
     """
     if a["team"] != b["team"]:
         return PAIR_CORRELATION["opposite_teams"]
@@ -457,8 +480,56 @@ def _pair_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, float]]
     return out
 
 
+def _triple_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, int, float, float, float]]:
+    """``(a, b, c, r_ab, r_ac, r_bc)`` for the triples of one event worth offering.
+
+    The rulebook (`config.TRIPLES_ENABLED`): ``a`` and ``b`` are on one team and
+    on *different* stats, ``c`` is on the other team. That is the only shape
+    rules 1 and 3 leave -- a match has two teams, so three legs put two on one
+    side, and those two may not share a stat.
+
+    Priced and thinned exactly as pairs are: every candidate gets its
+    ``(c, w)`` from `block_terms`, any that needs a lay is dropped, and up to
+    `keep` survive the ``(c, w)`` frontier.
+    """
+    if len(g) < 3 or keep <= 0:
+        return []
+    known = g[["team", "target", "line"]].notna().all(axis=1).to_numpy()
+    team = g["team"].to_numpy(); target = g["target"].to_numpy()
+    cand = []
+    for a, b in itertools.combinations(range(len(g)), 2):
+        if not (known[a] and known[b]) or team[a] != team[b] or target[a] == target[b]:
+            continue
+        for c in range(len(g)):
+            if known[c] and team[c] != team[a]:
+                cand.append((a, b, c))
+    if not cand:
+        return []
+    rows = [g.iloc[i] for i in range(len(g))]
+    r = np.array([[pair_rho(rows[a], rows[b]), pair_rho(rows[a], rows[c]),
+                   pair_rho(rows[b], rows[c])] for a, b, c in cand])
+    ix = np.array(cand)
+    p = g["p"].to_numpy(float); o = g["o"].to_numpy(float)
+    tt = block_terms(p[ix], o[ix], r)
+
+    live = tt["c"] > 0
+    order = np.argsort(-tt["c"][live], kind="stable")
+    cs, ws = tt["c"][live][order], tt["w"][live][order]
+    ix, r = ix[live][order], r[live][order]
+    out, w_min = [], np.inf
+    for k in range(len(cs)):
+        if ws[k] < w_min:
+            a, b, c = (int(x) for x in ix[k])
+            out.append((a, b, c, float(r[k, 0]), float(r[k, 1]), float(r[k, 2])))
+            w_min = ws[k]
+            if len(out) >= keep:
+                break
+    return out
+
+
 def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
-                  pair_keep: int = PAIR_KEEP) -> Options:
+                  pair_keep: int = PAIR_KEEP, triples: bool = TRIPLES_ENABLED,
+                  triple_keep: int = TRIPLE_KEEP) -> Options:
     """Group qualifying propositions into the per-event menu.
 
     Each event offers every qualifying proposition on its own, plus -- with
@@ -473,21 +544,30 @@ def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
     stake to match.
     """
     if not {"team", "target", "line"} <= set(qualified.columns):
-        pairs = False
+        pairs = triples = False
     codes, ps, os_, p2s, o2s, rhos, members, frames = [], [], [], [], [], [], [], []
+    p3s, o3s, r13s, r23s = [], [], [], []
     for i, (code, g) in enumerate(qualified.groupby("sheet_code", sort=False)):
         g = g.reset_index(drop=True)
         n = len(g)
         cand = _pair_candidates(g, pair_keep) if pairs else []
+        tri = _triple_candidates(g, triple_keep) if triples else []
         p = g["p"].to_numpy(float); o = g["o"].to_numpy(float)
+        z_pairs = np.zeros(len(cand))
 
         codes.append(str(code))
-        ps.append(np.r_[p, [p[a] for a, _, _ in cand]])
-        os_.append(np.r_[o, [o[a] for a, _, _ in cand]])
-        p2s.append(np.r_[np.zeros(n), [p[b] for _, b, _ in cand]])
-        o2s.append(np.r_[np.zeros(n), [o[b] for _, b, _ in cand]])
-        rhos.append(np.r_[np.zeros(n), [r for _, _, r in cand]])
-        members.append(tuple([(k,) for k in range(n)] + [(a, b) for a, b, _ in cand]))
+        ps.append(np.r_[p, [p[a] for a, _, _ in cand], [p[a] for a, *_ in tri]])
+        os_.append(np.r_[o, [o[a] for a, _, _ in cand], [o[a] for a, *_ in tri]])
+        p2s.append(np.r_[np.zeros(n), [p[b] for _, b, _ in cand], [p[t[1]] for t in tri]])
+        o2s.append(np.r_[np.zeros(n), [o[b] for _, b, _ in cand], [o[t[1]] for t in tri]])
+        rhos.append(np.r_[np.zeros(n), [r for _, _, r in cand], [t[3] for t in tri]])
+        # Third slot: zero for singles and pairs, filled only by a triple.
+        p3s.append(np.r_[np.zeros(n), z_pairs, [p[t[2]] for t in tri]])
+        o3s.append(np.r_[np.zeros(n), z_pairs, [o[t[2]] for t in tri]])
+        r13s.append(np.r_[np.zeros(n), z_pairs, [t[4] for t in tri]])
+        r23s.append(np.r_[np.zeros(n), z_pairs, [t[5] for t in tri]])
+        members.append(tuple([(k,) for k in range(n)] + [(a, b) for a, b, _ in cand]
+                             + [(t[0], t[1], t[2]) for t in tri]))
         # `option` indexes the *option* list, so a proposition's own row keeps the
         # index it always had and pairs are appended after. `picks_label`'s
         # `CODE#k` token therefore still resolves, and older payloads still read.
@@ -495,7 +575,8 @@ def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
     props = (pd.concat(frames, ignore_index=True) if frames
              else qualified.assign(event=pd.Series(dtype=int), option=pd.Series(dtype=int)))
     return Options(tuple(codes), tuple(ps), tuple(os_), props,
-                   tuple(p2s), tuple(o2s), tuple(rhos), tuple(members))
+                   tuple(p2s), tuple(o2s), tuple(rhos), tuple(members),
+                   tuple(p3s), tuple(o3s), tuple(r13s), tuple(r23s))
 
 
 # --- Per-option separable quantities ---------------------------------------
@@ -581,8 +662,86 @@ def pair_terms(p1: np.ndarray, o1: np.ndarray, p2: np.ndarray, o2: np.ndarray,
     return {"c": mu1 * b1 + mu2 * b2, "w": b1 + b2, "b1": b1, "b2": b2}
 
 
+# The slot pairs a block's correlations index, in the order they are carried:
+# slot 1 x 2, 1 x 3, 2 x 3. For a width-2 block only the first exists.
+BLOCK_PAIRS: tuple[tuple[int, int], ...] = ((0, 1), (0, 2), (1, 2))
+
+
+def block_terms(p: np.ndarray, o: np.ndarray, r: np.ndarray) -> dict[str, np.ndarray]:
+    """`pair_terms` for blocks of any width: ``b = S^-1 mu``, ``c = mu . b``, ``w = sum b``.
+
+    ``p`` and ``o`` are ``(..., W)``; ``r`` is ``(..., len(BLOCK_PAIRS[:W(W-1)/2]))``,
+    the block's pairwise correlations in `BLOCK_PAIRS` order. An empty slot
+    (``p = 0``) carries no edge and unit variance with no covariance, so it
+    solves to a zero weight and changes nothing -- the same convention
+    `pair_terms` uses, which this reproduces exactly at ``W = 2``.
+
+    Used for triples. Pairs keep `pair_terms`' closed form so every stored number
+    stays bit-for-bit reproducible.
+    """
+    p = np.asarray(p, dtype=float); o = np.asarray(o, dtype=float)
+    r = np.asarray(r, dtype=float)
+    W = p.shape[-1]
+    pc = np.clip(p, P_CLAMP, 1.0 - P_CLAMP)
+    live = p > 0
+    mu = np.where(live, np.maximum(o * p - 1.0, 0.0), 0.0)
+    v = np.where(live, o**2 * pc * (1.0 - pc), 1.0)
+    S = np.zeros(p.shape + (W,))
+    idx = np.arange(W)
+    S[..., idx, idx] = v
+    for k, (i, j) in enumerate(BLOCK_PAIRS[: W * (W - 1) // 2]):
+        cov = np.where(live[..., i] & live[..., j], r[..., k] * np.sqrt(v[..., i] * v[..., j]), 0.0)
+        S[..., i, j] = cov
+        S[..., j, i] = cov
+    b = np.linalg.solve(S, mu[..., None])[..., 0]
+    bad = (b < -1e-12).any(axis=-1, keepdims=True)
+    b = np.where(bad, 0.0, np.maximum(b, 0.0))
+    return {"c": (mu * b).sum(axis=-1), "w": b.sum(axis=-1), "b": b}
+
+
+def block_joint(p: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Every joint outcome of a block of correlated legs. Shape ``(..., 2**W)``.
+
+    Outcome ``k`` is the bit pattern of which legs land: bit ``i`` set means leg
+    ``i`` landed. The joint is the second-order Bahadur expansion::
+
+        P(x) = prod p_i^x_i q_i^(1-x_i) * (1 + sum_{i<j} r_ij z_i z_j),
+        z_i = (x_i - p_i) / sqrt(p_i q_i)
+
+    which has exactly the requested marginals and pairwise correlations, and **no
+    three-way term** -- the one assumption a triple adds. At ``W = 2`` it is
+    `joint_both`'s ``P11 = p1 p2 + r sqrt(p1 q1 p2 q2)`` exactly. Where a large
+    correlation drives a cell negative it is clipped to zero and the row
+    renormalised; at the correlations triples are allowed (0.17 within a team, 0
+    across) that does not occur in practice.
+    """
+    p = np.asarray(p, dtype=float); r = np.asarray(r, dtype=float)
+    W = p.shape[-1]
+    bits = ((np.arange(2**W)[:, None] >> np.arange(W)[None, :]) & 1).astype(float)  # (2^W, W)
+    pe = p[..., None, :]                                                            # (..., 1, W)
+    base = np.prod(np.where(bits > 0, pe, 1.0 - pe), axis=-1)                       # (..., 2^W)
+    sd = np.sqrt(np.clip(p * (1.0 - p), 0.0, None))
+    safe = np.where(sd > 0, sd, 1.0)[..., None, :]
+    z = np.where(sd[..., None, :] > 0, (bits - pe) / safe, 0.0)                     # (..., 2^W, W)
+    corr = np.ones(base.shape)
+    for k, (i, j) in enumerate(BLOCK_PAIRS[: W * (W - 1) // 2]):
+        corr = corr + r[..., k, None] * z[..., i] * z[..., j]
+    joint = np.clip(base * corr, 0.0, None)
+    total = joint.sum(axis=-1, keepdims=True)
+    return joint / np.where(total > 0, total, 1.0)
+
+
 def option_terms(opts: Options, j: int) -> dict[str, np.ndarray]:
     """The additive `(c, w)` pair for every option of event ``j``, pairs included."""
+    if opts.width == 3:
+        P = np.stack([opts.p[j], opts.p2[j], opts.p3[j]], axis=-1)
+        O = np.stack([opts.o[j], opts.o2[j], opts.o3[j]], axis=-1)
+        Rr = np.stack([opts.rho[j], opts.rho13[j], opts.rho23[j]], axis=-1)
+        t = block_terms(P, O, Rr)
+        # Scalars per option only: `_sum_terms` adds every key across events, and
+        # the per-slot weights it would add are the same shape `pair_terms` gives.
+        return {"c": t["c"], "w": t["w"],
+                "b1": t["b"][..., 0], "b2": t["b"][..., 1], "b3": t["b"][..., 2]}
     return pair_terms(opts.p[j], opts.o[j], opts.p2[j], opts.o2[j], opts.rho[j])
 
 
@@ -608,6 +767,8 @@ def stakes_for(picks: np.ndarray, opts: Options, split: str,
     special case.
     """
     m, n_ev = picks.shape
+    if opts.width == 3:
+        return _stakes_for_triples(picks, opts, split, max_leg_stake)
     p = np.zeros((m, 2 * n_ev)); o = np.zeros((m, 2 * n_ev)); rho = np.zeros((m, n_ev))
     for j in range(n_ev):
         taken = picks[:, j] >= 0
@@ -644,6 +805,43 @@ def stakes_for(picks: np.ndarray, opts: Options, split: str,
         weight[flat] = np.where(active[flat], 1.0, 0.0) / np.maximum(n_props, 1)
         total[flat] = 1.0
     return cap_stakes(weight / total, active, max_leg_stake), p, o, rho
+
+
+def _stakes_for_triples(picks: np.ndarray, opts: Options, split: str,
+                        max_leg_stake: float = MAX_LEG_STAKE):
+    """`stakes_for` at width 3: three slots per event, and ``rho`` as ``(m, n, 3)``.
+
+    ``rho[..., 0:3]`` are the slot correlations in `BLOCK_PAIRS` order. Every
+    consumer -- `metrics`, `return_pmf`, `growth.ruin_prob` / `sweep_prob` --
+    tells the layouts apart by ``rho.ndim``, so a pair-only slate never reaches
+    this path.
+    """
+    m, n_ev = picks.shape
+    P = np.zeros((m, n_ev, 3)); O = np.zeros((m, n_ev, 3)); Rr = np.zeros((m, n_ev, 3))
+    for j in range(n_ev):
+        taken = picks[:, j] >= 0
+        idx = picks[taken, j]
+        for s, (pp, oo) in enumerate(((opts.p, opts.o), (opts.p2, opts.o2), (opts.p3, opts.o3))):
+            P[taken, j, s] = pp[j][idx]
+            O[taken, j, s] = oo[j][idx]
+        Rr[taken, j, 0] = opts.rho[j][idx]
+        Rr[taken, j, 1] = opts.rho13[j][idx]
+        Rr[taken, j, 2] = opts.rho23[j][idx]
+    if split != SPLIT_GROWTH:
+        if split in LEGACY_SPLITS:
+            raise ValueError(f"{split!r} was retired; portfolios are scored under {SPLIT_GROWTH!r} only.")
+        raise ValueError(f"unknown split {split!r}; expected one of {SPLITS}")
+    weight = block_terms(P, O, Rr)["b"].reshape(m, 3 * n_ev)
+    p = P.reshape(m, 3 * n_ev); o = O.reshape(m, 3 * n_ev)
+    active = p > 0
+    weight = np.where(active, weight, 0.0)
+    total = weight.sum(axis=1, keepdims=True)
+    flat = total[:, 0] <= 0
+    if flat.any():
+        n_props = active[flat].sum(axis=1, keepdims=True)
+        weight[flat] = np.where(active[flat], 1.0, 0.0) / np.maximum(n_props, 1)
+        total[flat] = 1.0
+    return cap_stakes(weight / total, active, max_leg_stake), p, o, Rr
 
 
 def row_cap(n_legs: np.ndarray, limit: float = MAX_LEG_STAKE,
@@ -726,7 +924,15 @@ def metrics(stakes: np.ndarray, p: np.ndarray, o: np.ndarray,
     """
     er = (stakes * o * p).sum(axis=1)
     var = (stakes**2 * o**2 * p * (1.0 - p)).sum(axis=1)
-    if rho is not None:
+    if rho is not None and np.ndim(rho) == 3:
+        # Width-3 blocks: one covariance term per slot pair in `BLOCK_PAIRS`.
+        m = stakes.shape[0]
+        S = stakes.reshape(m, -1, 3); P = p.reshape(m, -1, 3); O = o.reshape(m, -1, 3)
+        V = O**2 * P * (1.0 - P)
+        for k, (i, j) in enumerate(BLOCK_PAIRS):
+            var = var + 2.0 * (S[..., i] * S[..., j] * rho[..., k]
+                               * np.sqrt(V[..., i] * V[..., j])).sum(axis=1)
+    elif rho is not None:
         # The covariance term, one per event block: 2 s1 s2 rho sqrt(v1 v2). Zero
         # wherever the block holds one proposition, because `rho` is zero there.
         #
@@ -850,6 +1056,8 @@ def return_pmf(pay: np.ndarray, p: np.ndarray, grid: int = GRID,
     pay = np.asarray(pay, dtype=float)
     p = np.asarray(p, dtype=float)
     m, n = pay.shape
+    if rho is not None and np.ndim(rho) == 3:
+        return _return_pmf_triples(pay, p, grid, np.asarray(rho, dtype=float), close_tail)
     # Pad to an even column count so the reshape below is total. A trailing
     # all-zero column is the no-op every zero-probability column already is.
     if n % 2:
@@ -880,6 +1088,39 @@ def return_pmf(pay: np.ndarray, p: np.ndarray, grid: int = GRID,
              + shifted(dist, k1) * (p1 - both)[:, None]
              + shifted(dist, k2) * (p2 - both)[:, None]
              + shifted(dist, k1 + k2) * both[:, None])
+        dist = d
+    if close_tail:
+        dist[:, -1] += 1.0 - dist.sum(axis=1)
+    return dist, step[:, 0]
+
+
+def _return_pmf_triples(pay, p, grid, rho, close_tail):
+    """`return_pmf` over width-3 blocks: each block convolves through its 8-outcome joint."""
+    m, n = pay.shape
+    blocks = n // 3
+    idx = np.arange(grid)
+    total = pay.sum(axis=1, keepdims=True)
+    step = np.where(total > 0, total, 1.0) / (grid - 1)
+    k = np.rint(pay / step).astype(np.int64)
+
+    def shifted(dist, amount):
+        src = idx[None, :] - amount[:, None]
+        return np.where(src >= 0,
+                        np.take_along_axis(dist, np.clip(src, 0, grid - 1), axis=1), 0.0)
+
+    bits = (np.arange(8)[:, None] >> np.arange(3)[None, :]) & 1
+    dist = np.zeros((m, grid))
+    dist[:, 0] = 1.0
+    for b in range(blocks):
+        cols = slice(3 * b, 3 * b + 3)
+        J = block_joint(p[:, cols], rho[:, b, :])               # (m, 8)
+        kb = k[:, cols]
+        d = np.zeros_like(dist)
+        for out in range(8):
+            w = J[:, out]
+            if not np.any(w > 0):
+                continue
+            d += shifted(dist, (kb * bits[out]).sum(axis=1)) * w[:, None]
         dist = d
     if close_tail:
         dist[:, -1] += 1.0 - dist.sum(axis=1)
@@ -1513,7 +1754,7 @@ def legs(picks: np.ndarray, opts: Options, combo: int, split: str,
         if k < 0:
             continue
         for slot, prop in enumerate(opts.members[j][k]):
-            col = 2 * j + slot
+            col = opts.width * j + slot
             if p[0, col] <= 0:
                 continue
             src = opts.props[(opts.props["event"] == j)
@@ -1553,7 +1794,8 @@ def picks_label(picks_row: np.ndarray, opts: Options) -> str:
 
 def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
            leg_var: int | None = None, max_legs: int | None = None,
-           thresholds=THRESHOLDS, grid: int = GRID, **pool_kwargs) -> dict:
+           thresholds=THRESHOLDS, grid: int = GRID, triples: bool = TRIPLES_ENABLED,
+           **pool_kwargs) -> dict:
     """Filled odds form -> everything the workbook and the notebook need.
 
     ``leg_var=k`` allows portfolios that leave out up to ``k`` of the qualifying
@@ -1571,7 +1813,7 @@ def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
     steps lives in the package, where a test can reach it.
     """
     qualified = qualify(filled)
-    opts = event_options(qualified)
+    opts = event_options(qualified, triples=triples)
     picks, info = build_pool(opts, min_legs=min_legs, leg_var=leg_var,
                              max_legs=max_legs, **pool_kwargs)
 
@@ -1595,7 +1837,8 @@ __all__ = [
     "row_cap",
     "EXHAUSTIVE_MAX", "POOL_MAX", "BUCKETS", "KEEP_PER_CELL", "GRID",
     "DOMINANCE_CRITERIA", "DOMINANCE_SENSES",
-    "Options", "qualify", "event_options", "leg_terms",
+    "Options", "qualify", "event_options", "leg_terms", "BLOCK_PAIRS", "block_terms",
+    "block_joint",
     "stakes_for", "cap_stakes", "metrics",
     "threshold_probs_batch", "threshold_probs_exact",
     "return_pmf",
