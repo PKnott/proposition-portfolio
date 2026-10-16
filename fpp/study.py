@@ -1110,7 +1110,9 @@ def portfolio_summary(bt: pd.DataFrame, baseline: str = "today", n_boot: int = 5
 
 def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_VAR,
                       grid: int = REPLAY_GRID, pick_rule: dict | None = None,
-                      max_leg_stake: float | None = None) -> dict:
+                      max_leg_stake: float | None = None,
+                      pair_same_team_stat: bool | None = None,
+                      p: np.ndarray | None = None) -> dict:
     """One slate through `portfolio.search`, with every undominated portfolio settled.
 
     Returns ``{"frontier": DataFrame, "pick": Series, "info": dict}``. The frontier
@@ -1122,12 +1124,14 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     from . import portfolio as pf
     from .growth import growth_metrics, suggested_fraction
 
-    from .config import MAX_LEG_STAKE
+    from .config import MAX_LEG_STAKE, PAIR_SAME_TEAM_STAT
 
     rule = PICK_RULE if pick_rule is None else pick_rule
     cap = MAX_LEG_STAKE if max_leg_stake is None else max_leg_stake
-    res = pf.search(_filled(rows, rows["p"].to_numpy()), leg_var=leg_var, grid=grid,
-                    triples=triples, max_leg_stake=cap)
+    same = PAIR_SAME_TEAM_STAT if pair_same_team_stat is None else pair_same_team_stat
+    p_sel = rows["p"].to_numpy() if p is None else np.asarray(p, float)
+    res = pf.search(_filled(rows, p_sel), leg_var=leg_var, grid=grid,
+                    triples=triples, max_leg_stake=cap, pair_same_team_stat=same)
     scored, opts, picks = res["scored"], res["options"], res["picks"]
     front = scored[scored["undominated"]].copy()
     W = opts.width
@@ -1472,6 +1476,79 @@ def shift_monitor(s: pd.DataFrame, by=("run_code", "league")) -> pd.DataFrame:
     return out.reset_index()
 
 
+
+# --- 10. same team, same stat in pairs ------------------------------------
+
+
+def _pair_rule_job(args) -> dict:
+    run, same = args
+    s, _ = load_study_set()
+    raw, _ = load_study_set(dedupe=False)
+    rows = raw[raw["run_code"] == run].reset_index(drop=True)
+    # The production shots shift, fitted without this slate's matches.
+    train = s[(s["run_code"].astype(str) != run) & ~s["event"].isin(rows["event"])]
+    fit = shots_shift(train, ridges=(30.0,))
+    is_shots = (rows["target"] == "shots").to_numpy()
+    c = np.array([fit["shift"].get(l, fit["pooled"]) for l in rows["league"].astype(str)])
+    p = np.where(is_shots, expit(logit(rows["p"].to_numpy()) + c), rows["p"].to_numpy())
+    out = frontier_outcomes(rows, triples=True, pair_same_team_stat=same, p=p)
+    f, pk = out["frontier"], out["pick"]
+    return {"slate": run, "same_team_stat": same, "frontier": len(f),
+            "front_R_mean": float(f["realised_R"].mean()),
+            "front_E_mean": float(f["pct_expected_return"].mean()),
+            "front_profitable": float((f["realised_R"] > 1).mean()),
+            **{f"pick_{k}": pk[k] for k in ("legs", "multi_events", "pct_expected_return",
+                                            "realised_R", "f", "growth")}}
+
+
+def pair_rule_backtest(slates=AS_RUN_SLATES, *, workers: int = 4,
+                       cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
+    """Every slate through the builder as production now runs it, with same-team-
+    same-stat pairs allowed and banned (`config.PAIR_SAME_TEAM_STAT`).
+
+    Production setting throughout: triples on, and the per-league shots shift
+    fitted on the other slates with this slate's matches removed. Settled
+    against results; one row per slate x setting. Cached; ~30-50 minutes fresh.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    path = Path(cache) if cache else None
+    if path is not None and path.exists() and not refresh:
+        cached = pd.read_parquet(path)
+        if sorted(cached["slate"].unique()) == sorted(slates):
+            return cached
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        out = pd.DataFrame(list(ex.map(_pair_rule_job, [(r, s) for r in slates
+                                                        for s in (True, False)])))
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_parquet(path, index=False)
+    return out
+
+
+def pair_rule_summary(pr_: pd.DataFrame, n_boot: int = 5000, seed: int = 2026) -> pd.DataFrame:
+    """Allowed against banned: the pick's capital multiple and the frontier, slate by slate."""
+    piv = pr_.pivot(index="slate", columns="same_team_stat", values="pick_growth")
+    d = (piv[False] - piv[True]).to_numpy()
+    rng = np.random.default_rng(seed)
+    boot = d[rng.integers(0, len(d), size=(n_boot, len(d)))].sum(axis=1)
+    rows = []
+    for same, g in pr_.groupby("same_team_stat"):
+        rows.append({"same_team_same_stat_pairs": "allowed" if same else "banned",
+                     "pick_capital_x": float(np.exp(g["pick_growth"].sum())),
+                     "pick_mean_R": g["pick_realised_R"].mean(),
+                     "pick_mean_legs": g["pick_legs"].mean(),
+                     "frontier_delivered": g["front_R_mean"].mean(),
+                     "frontier_profitable": g["front_profitable"].mean()})
+    out = pd.DataFrame(rows)
+    out.attrs.update(gain=float(np.exp(d.sum())),
+                     gain_lo=float(np.exp(np.percentile(boot, 2.5))),
+                     gain_hi=float(np.exp(np.percentile(boot, 97.5))),
+                     better=int((d > 1e-9).sum()), worse=int((d < -1e-9).sum()),
+                     same=int((np.abs(d) <= 1e-9).sum()))
+    return out
+
+
 __all__ = [
     "load_study_set", "run_models", "grade", "pair_frame", "rho_table", "placebo_correlation",
     "correlation_vs_config", "reliability_frame", "gap_table", "market_comparison",
@@ -1482,5 +1559,5 @@ __all__ = [
     "replay_slate", "portfolio_backtest", "portfolio_summary", "frontier_outcomes",
     "AS_RUN_SLATES", "triples_backtest", "triples_summary", "LEG_CAPS",
     "leg_cap_backtest", "leg_cap_replay", "leg_cap_summary", "fit_logit_shift",
-    "shots_shift", "shift_monitor", "push_deflate_backtest", "backtest_summary",
+    "shots_shift", "shift_monitor", "pair_rule_backtest", "pair_rule_summary", "push_deflate_backtest", "backtest_summary",
 ]

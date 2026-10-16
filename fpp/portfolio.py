@@ -132,6 +132,7 @@ from .config import (
     CAP_RELIEF,
     PAIR_CORRELATION,
     PAIR_KEEP,
+    PAIR_SAME_TEAM_STAT,
     PAIRS_ENABLED,
     TRIPLE_KEEP,
     TRIPLES_ENABLED,
@@ -430,7 +431,8 @@ def pair_rho(a: pd.Series, b: pd.Series) -> float:
     return PAIR_CORRELATION["same_team_same_stat_far"]
 
 
-def _pair_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, float]]:
+def _pair_candidates(g: pd.DataFrame, keep: int,
+                     same_team_stat: bool = PAIR_SAME_TEAM_STAT) -> list[tuple[int, int, float]]:
     """``(i, j, rho)`` for the pairs of one event worth offering the search.
 
     Every pair is priced first -- one 2x2 solve each, a few thousand per slate, and
@@ -448,6 +450,9 @@ def _pair_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, float]]
     ``(n_events, bucket(W))`` ranked on ``C`` -- two options with equal capacity at
     different normalisers land in different buckets and are both useful. The same
     shape as `staking.undominated`'s ``(p, o)`` frontier, one level up.
+
+    With `same_team_stat` off (`config.PAIR_SAME_TEAM_STAT`), two lines on the
+    same team's same statistic are never paired.
     """
     n = len(g)
     if n < 2 or keep <= 0:
@@ -455,8 +460,11 @@ def _pair_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, float]]
     # A proposition whose label would not parse cannot be classified against
     # another, so it is offered on its own and never in a pair.
     known = g[["team", "target", "line"]].notna().all(axis=1).to_numpy()
+    team = g["team"].to_numpy() if "team" in g else np.full(n, None)
+    target = g["target"].to_numpy() if "target" in g else np.full(n, None)
     idx = [(a, b) for a, b in itertools.combinations(range(n), 2)
-           if known[a] and known[b]]
+           if known[a] and known[b]
+           and (same_team_stat or team[a] != team[b] or target[a] != target[b])]
     if not idx:
         return []
     i = np.fromiter((a for a, _ in idx), int, len(idx))
@@ -529,7 +537,8 @@ def _triple_candidates(g: pd.DataFrame, keep: int) -> list[tuple[int, int, int, 
 
 def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
                   pair_keep: int = PAIR_KEEP, triples: bool = TRIPLES_ENABLED,
-                  triple_keep: int = TRIPLE_KEEP) -> Options:
+                  triple_keep: int = TRIPLE_KEEP,
+                  pair_same_team_stat: bool = PAIR_SAME_TEAM_STAT) -> Options:
     """Group qualifying propositions into the per-event menu.
 
     Each event offers every qualifying proposition on its own, plus -- with
@@ -550,7 +559,7 @@ def event_options(qualified: pd.DataFrame, *, pairs: bool = PAIRS_ENABLED,
     for i, (code, g) in enumerate(qualified.groupby("sheet_code", sort=False)):
         g = g.reset_index(drop=True)
         n = len(g)
-        cand = _pair_candidates(g, pair_keep) if pairs else []
+        cand = _pair_candidates(g, pair_keep, pair_same_team_stat) if pairs else []
         tri = _triple_candidates(g, triple_keep) if triples else []
         p = g["p"].to_numpy(float); o = g["o"].to_numpy(float)
         z_pairs = np.zeros(len(cand))
@@ -1796,7 +1805,8 @@ def picks_label(picks_row: np.ndarray, opts: Options) -> str:
 def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
            leg_var: int | None = None, max_legs: int | None = None,
            thresholds=THRESHOLDS, grid: int = GRID, triples: bool = TRIPLES_ENABLED,
-           max_leg_stake: float = MAX_LEG_STAKE, **pool_kwargs) -> dict:
+           max_leg_stake: float = MAX_LEG_STAKE,
+           pair_same_team_stat: bool = PAIR_SAME_TEAM_STAT, **pool_kwargs) -> dict:
     """Filled odds form -> everything the workbook and the notebook need.
 
     ``leg_var=k`` allows portfolios that leave out up to ``k`` of the qualifying
@@ -1814,7 +1824,7 @@ def search(filled: pd.DataFrame, *, min_legs: int | str | None = None,
     steps lives in the package, where a test can reach it.
     """
     qualified = qualify(filled)
-    opts = event_options(qualified, triples=triples)
+    opts = event_options(qualified, triples=triples, pair_same_team_stat=pair_same_team_stat)
     picks, info = build_pool(opts, min_legs=min_legs, leg_var=leg_var,
                              max_legs=max_legs, **pool_kwargs)
 

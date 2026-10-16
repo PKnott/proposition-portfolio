@@ -485,6 +485,16 @@ CAP_RELIEF = 2.0
 PAIRS_ENABLED = True
 PAIR_KEEP = 8
 
+# Whether a pair may hold two lines on the same team's same statistic.
+#
+# Off since 16 Oct 2026, matching the triple rulebook below. The measured outcome
+# correlation for such pairs is priced (0.23-0.60 by line gap), but both legs are
+# read off one predicted mean, so an error in that estimate hits both -- a shared
+# model error the correlation does not capture. Different-stat pairs draw on
+# different models and stay allowed. The replay with and without this rule is in
+# `07_Analysis` (`study.pair_rule_backtest`).
+PAIR_SAME_TEAM_STAT = False
+
 # Three legs from one match (`portfolio.event_options`). Switched on 14 Oct 2026.
 #
 # The rulebook, set 14 Oct 2026, so a triple is two legs on one team and one on
@@ -832,6 +842,7 @@ __all__ = [
     "EXPORT_MAX",
     "PAIR_CORRELATION",
     "TRIPLES_ENABLED",
+    "PAIR_SAME_TEAM_STAT",
     "TRIPLE_KEEP",
     "STUDY_FIRST_RUN",
     "SHOTS_LOGIT_SHIFT",

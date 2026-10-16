@@ -202,3 +202,14 @@ def test_replay_slate_maps_legs_to_outcomes_at_width_three():
     legs = pf.legs(res["picks"], res["options"], int(best["combo"]), best["split"])
     won = dict(zip(rows["label"], rows["y"]))
     assert out["R"] == pytest.approx(float((legs["stake"] * legs["o"] * legs["label"].map(won)).sum()))
+
+
+def test_pairs_never_hold_two_lines_on_one_team_stat_when_the_rule_is_off():
+    g = _event([("A", "goals", 1.5, 0.45, 2.5), ("A", "goals", 2.5, 0.30, 3.8),
+                ("A", "corners", 4.5, 0.55, 2.0), ("B", "goals", 1.5, 0.40, 2.7)])
+    def same(cands):
+        return [(a, b) for a, b, _ in cands
+                if g.team[a] == g.team[b] and g.target[a] == g.target[b]]
+    assert same(pf._pair_candidates(g, keep=100, same_team_stat=True))
+    assert not same(pf._pair_candidates(g, keep=100, same_team_stat=False))
+    assert pf._pair_candidates(g, keep=100, same_team_stat=False)   # other pairs survive
