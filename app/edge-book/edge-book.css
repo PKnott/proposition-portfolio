@@ -478,7 +478,7 @@ main{ padding:20px 24px 48px; }
 
 .proj-io{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:12px;
   font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:12px; color:var(--ink-dim); }
-/* The rail's segmented pills, reused for the ticket's stake mode. Sized down to
+/* The rail's segmented pills, reused for the panel's stake mode. Sized down to
    sit on the same baseline as the number box beside them. */
 .proj-io .split-picks button{ padding:5px 9px; font-size:11px; }
 .proj-io label{ display:flex; align-items:center; gap:7px; }
@@ -543,7 +543,7 @@ main{ padding:20px 24px 48px; }
   border-top:1px solid var(--line); line-height:1.5;
 }
 .panel .caveat strong{ color:var(--ink); }
-/* The cap note sits above the accounts table rather than below the ticket's other
+/* The cap note sits above the accounts table rather than below the panel's other
    caveats, because it qualifies the stake column itself. No top rule: it reads as
    a footnote to the table it follows, not as a new section. */
 .panel .cap-note{ border-top:0; padding-top:0; margin-top:8px; color:var(--stake); }
@@ -600,7 +600,7 @@ main{ padding:20px 24px 48px; }
 .calc .cash{ color:var(--ink); font-weight:600; }
 .calc .band{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); margin-top:2px; }
 
-/* --- order ticket --------------------------------------------------------
+/* --- Prop Picks panel --------------------------------------------------------
  *
  * The one panel that is not about compounding: what to back, where, and for how
  * much, once. It borrows the calculator's table rhythm rather than the legs
@@ -608,56 +608,56 @@ main{ padding:20px 24px 48px; }
  * the same row of the grid reads as a second design.
  */
 
-.ticket-head{ font-size:13px; margin:0 0 14px; }
-.ticket-head strong.r-star{ color:var(--edge); }
-.ticket-head strong.r-prot{ color:var(--stake); }
-.ticket-head strong.r-custom{ color:var(--ink); }
-.ticket-head strong.cash{ color:var(--stake); }
+.prop-picks-head{ font-size:13px; margin:0 0 14px; }
+.prop-picks-head strong.r-star{ color:var(--edge); }
+.prop-picks-head strong.r-prot{ color:var(--stake); }
+.prop-picks-head strong.r-custom{ color:var(--ink); }
+.prop-picks-head strong.cash{ color:var(--stake); }
 /* The ledger's name for this portfolio, set apart because it is a thing to copy
    rather than a thing to read: `record_position` takes exactly this string. */
-.ticket-ref{
+.prop-picks-ref{
   float:right; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
   font-size:11px; color:var(--ink-dim); border:1px solid var(--line);
   border-radius:5px; padding:1px 7px; background:var(--paper);
 }
 
-.ticket, .accounts{ width:100%; border-collapse:collapse; font-size:12px;
+.prop-picks, .accounts{ width:100%; border-collapse:collapse; font-size:12px;
   font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; }
-.ticket th{
+.prop-picks th{
   text-align:left; padding:0 8px 8px 0; font-weight:600; color:var(--ink-dim);
   font-size:10px; text-transform:uppercase; letter-spacing:.06em;
   border-bottom:1px solid var(--line); white-space:nowrap;
 }
-.ticket th:last-child, .ticket td.cash, .accounts td.cash{ text-align:right; padding-right:0; }
-.ticket td, .accounts td{
+.prop-picks th:last-child, .prop-picks td.cash, .accounts td.cash{ text-align:right; padding-right:0; }
+.prop-picks td, .accounts td{
   padding:8px 8px 8px 0; border-bottom:1px solid var(--line);
   vertical-align:top; white-space:nowrap;
 }
-.ticket tr:last-child td{ border-bottom:none; }
+.prop-picks tr:last-child td{ border-bottom:none; }
 /* The only cell allowed to wrap. Everything else is a number or a book name and
    is more readable clipped to one line than reflowed. */
-.ticket td.sel{
+.prop-picks td.sel{
   font-family:'Inter', system-ui, sans-serif; white-space:normal;
   min-width:150px; width:52%; line-height:1.35;
 }
-/* The fixture above the selection rather than beside it: the ticket is half a
+/* The fixture above the selection rather than beside it: the panel is half a
    page wide and 'SV Elversberg vs Bayer Leverkusen' does not fit a column. */
-.ticket td.sel .fx{
+.prop-picks td.sel .fx{
   display:block; font-family:'JetBrains Mono', ui-monospace, Menlo, monospace;
   font-size:10px; color:var(--ink-dim); margin-bottom:2px;
 }
-.ticket td.bk, .accounts td.bk{ color:var(--ink); }
-/* The ticket is grouped by account and then by match, so a book's name is printed
+.prop-picks td.bk, .accounts td.bk{ color:var(--ink); }
+/* The panel is grouped by account and then by match, so a book's name is printed
    once and the rows beneath it belong to the same account. The rule above the
    opening row is what makes that a block rather than a list with gaps in a
    column; the name is weighted to match, because it is a heading doing a cell's
    job. */
-.ticket tr.bk-open td{ border-top:1px solid var(--line); }
-.ticket tr.bk-open:first-child td{ border-top:none; }
-.ticket tr.bk-open td.bk{ font-weight:600; }
-.ticket td.cash, .accounts td.cash{ color:var(--stake); font-weight:600; }
+.prop-picks tr.bk-open td{ border-top:1px solid var(--line); }
+.prop-picks tr.bk-open:first-child td{ border-top:none; }
+.prop-picks tr.bk-open td.bk{ font-weight:600; }
+.prop-picks td.cash, .accounts td.cash{ color:var(--stake); font-weight:600; }
 
-.ticket-sub{
+.prop-picks-sub{
   font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim);
   font-family:'JetBrains Mono', ui-monospace, Menlo, monospace; margin:22px 0 8px;
 }
