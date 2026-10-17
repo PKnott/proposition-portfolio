@@ -207,3 +207,25 @@ def test_odds_form_round_trips_the_model_stamp(tmp_path):
     assert meta["model"]["model_version"] == "v9"
     assert meta["model"]["model_fingerprint"] == "abc123"
     assert meta["source"] == "predictions_2026-10-18.xlsx" and meta["fixtures"] == 1
+
+
+def test_rule_search_finds_a_planted_band_and_holdout_scores_out_of_sample():
+    """A measure whose 60-80% band holds the winners on every slate is found."""
+    rng = np.random.default_rng(11)
+    rows = []
+    for s in range(6):
+        x, z, noise = rng.uniform(size=(3, 400))      # z is unrelated to the outcome
+        R = np.where((x > np.quantile(x, 0.6)) & (x <= np.quantile(x, 0.8)), 2.0, 1.0) + 0.1 * noise
+        rows.append(pd.DataFrame({"slate": f"S{s}", "x": x, "z": z, "R": R}))
+    A = pd.concat(rows, ignore_index=True)
+    A["R_pct"] = A.groupby("slate")["R"].rank(pct=True)
+    S = st.rule_search(A, measures=("x", "z"))
+    mean = S.mean(axis=1)
+    singles = mean[mean.index.get_level_values("m2") == ""]
+    best = singles.idxmax()
+    assert best[0] == "x" and (best[1], best[2]) == (60, 80)
+    # Banding on the unrelated measure as well cannot add much.
+    assert mean.max() <= singles.max() + 0.05
+    H = st.rule_holdout(S[S.notna().all(axis=1)])
+    assert len(H) == 6 and (H["held_out_score"] > 0.8).all()
+    assert st.describe_rule(best) == "x 60-80%"

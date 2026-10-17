@@ -1549,6 +1549,132 @@ def pair_rule_summary(pr_: pd.DataFrame, n_boot: int = 5000, seed: int = 2026) -
     return out
 
 
+
+# --- 11. which portfolio to choose off the frontier ------------------------
+#
+# A frontier holds thousands of portfolios and one is chosen. These functions
+# score every exported portfolio against what happened, and search the space of
+# "choose from this percentile band of that measure" rules -- singly and in
+# pairs -- for one that holds up on slates it was not chosen on.
+
+SELECTION_SLATES: tuple[str, ...] = ("R011", "R012", "R013", "R015", "R016", "R017", "R019",
+                                     "R020", "R021", "R022", "R025")
+# Portfolio measures a rule may band on, as named in the ledger's portfolio
+# table (and, for the Edge Book, in its payload).
+SELECTION_MEASURES: tuple[str, ...] = ("expected_return_pct", "g_g_suggested", "capacity", "g_p0",
+                                       "p_over_100", "median_leg_p", "sd_pct", "legs", "n_eff")
+
+
+def score_frontiers(slates=SELECTION_SLATES, root=None) -> pd.DataFrame:
+    """Every exported portfolio on each slate, with its realised return.
+
+    One row per portfolio: its measures, `R` (realised return per unit
+    allocated), `cap_growth` (log growth of capital at its suggested size) and
+    `slate`. A portfolio holding any leg without a result is dropped, not
+    scored as a loss.
+    """
+    import glob
+
+    res = ledger.load_results()
+    out = []
+    for r in slates:
+        hits = glob.glob(str(ledger.store_dir(root) / "Pending" / f"slate_{r}_*"))
+        if not hits:
+            continue
+        d = Path(hits[0])
+        pr = grade(pd.read_parquet(d / "propositions.parquet").assign(
+            fixture_date=lambda x: pd.to_datetime(x["fixture_date"]).dt.normalize()), res)
+        pr["y"] = pr["won"].astype(float)
+        po = pd.read_parquet(d / "portfolios.parquet")
+        lg = pd.read_parquet(d / "legs.parquet").merge(pr[["prop_key", "o", "y"]], on="prop_key", how="left")
+        incomplete = set(lg.loc[lg["y"].isna(), "portfolio_id"])
+        R = (lg["stake_frac"] * lg["o"] * lg["y"]).groupby(lg["portfolio_id"]).sum().rename("R")
+        po = po.merge(R, left_on="portfolio_id", right_index=True)
+        po = po[~po["portfolio_id"].isin(incomplete)].copy()
+        if po.empty:
+            continue
+        for c in ("g_g_suggested", "g_f_suggested", "g_p0"):
+            po[c] = pd.to_numeric(po[c], errors="coerce")
+        po["cap_growth"] = np.log1p(po["g_f_suggested"] * (po["R"] - 1.0))
+        po["slate"] = r
+        out.append(po)
+    A = pd.concat(out, ignore_index=True)
+    A["R_pct"] = A.groupby("slate")["R"].rank(pct=True)
+    return A
+
+
+def _bands(step: int = 10, min_width: int = 20) -> list[tuple[int, int]]:
+    return [(lo, hi) for lo in range(0, 100, step) for hi in range(lo + min_width, 101, step)]
+
+
+def rule_search(A: pd.DataFrame, measures=SELECTION_MEASURES, *, pairs: bool = True,
+                min_share: float = 0.01, min_count: int = 3) -> pd.DataFrame:
+    """Score every single- and two-measure percentile-band rule on every slate.
+
+    A rule keeps the portfolios whose within-slate percentile on each named
+    measure lies in its band. On each slate it is scored by the mean
+    within-slate percentile of realised return (`R_pct`) of what it keeps --
+    0.5 is the median portfolio -- so a slate where everything won and one
+    where everything lost count the same. A rule that keeps fewer than
+    `max(min_count, min_share * frontier)` portfolios on a slate scores NaN there.
+
+    Returns one row per rule with a column per slate; a single-measure rule has
+    an empty second measure (``""``, band ``-1``).
+    """
+    bands = _bands()
+    slates = list(A["slate"].unique())
+    rows = {}
+    for s in slates:
+        g = A[A["slate"] == s]
+        y = g["R_pct"].to_numpy()
+        need = max(min_count, int(np.ceil(min_share * len(g))))
+        M = {}
+        for m in measures:
+            q = g[m].rank(pct=True, method="average").to_numpy() * 100
+            M[m] = np.array([(q > lo) & (q <= hi) if lo > 0 else (q <= hi) for lo, hi in bands], float)
+        for m in measures:
+            cnt = M[m].sum(axis=1); sm = M[m] @ y
+            for k, (lo, hi) in enumerate(bands):
+                rows.setdefault((m, lo, hi, "", -1, -1), {})[s] = sm[k] / cnt[k] if cnt[k] >= need else np.nan
+        if pairs:
+            for a_i, a in enumerate(measures):
+                for b in measures[a_i + 1:]:
+                    cnt = M[a] @ M[b].T; sm = M[a] @ (M[b] * y).T
+                    val = np.where(cnt >= need, sm / np.maximum(cnt, 1), np.nan)
+                    for i, (alo, ahi) in enumerate(bands):
+                        for j, (blo, bhi) in enumerate(bands):
+                            rows.setdefault((a, alo, ahi, b, blo, bhi), {})[s] = val[i, j]
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index = pd.MultiIndex.from_tuples(out.index, names=["m1", "lo1", "hi1", "m2", "lo2", "hi2"])
+    return out[slates]
+
+
+def rule_holdout(scores: pd.DataFrame, top: int = 1) -> pd.DataFrame:
+    """Leave-one-slate-out test of the *search itself*.
+
+    For each slate: choose the rule with the best mean score over the other
+    slates (among rules defined on all of them), then record how it scored on
+    the held-out slate. The mean of those held-out scores is the honest estimate
+    of what "pick the best rule" is worth.
+    """
+    rows = []
+    for s in scores.columns:
+        tr = scores.drop(columns=s)
+        ok = tr.notna().all(axis=1) & scores[s].notna()
+        best = tr[ok].mean(axis=1).sort_values(ascending=False).index[:top]
+        for rk, rule in enumerate(best):
+            rows.append({"held_out": s, "rank": rk + 1, "rule": rule,
+                         "train_score": float(tr.loc[rule].mean()),
+                         "held_out_score": float(scores.loc[rule, s])})
+    return pd.DataFrame(rows)
+
+
+def describe_rule(rule) -> str:
+    m1, lo1, hi1, m2, lo2, hi2 = rule
+    s = f"{m1} {int(lo1)}-{int(hi1)}%"
+    return s if not m2 else s + f" & {m2} {int(lo2)}-{int(hi2)}%"
+
+
 __all__ = [
     "load_study_set", "run_models", "grade", "pair_frame", "rho_table", "placebo_correlation",
     "correlation_vs_config", "reliability_frame", "gap_table", "market_comparison",
@@ -1559,5 +1685,7 @@ __all__ = [
     "replay_slate", "portfolio_backtest", "portfolio_summary", "frontier_outcomes",
     "AS_RUN_SLATES", "triples_backtest", "triples_summary", "LEG_CAPS",
     "leg_cap_backtest", "leg_cap_replay", "leg_cap_summary", "fit_logit_shift",
-    "shots_shift", "shift_monitor", "pair_rule_backtest", "pair_rule_summary", "push_deflate_backtest", "backtest_summary",
+    "shots_shift", "shift_monitor", "pair_rule_backtest", "pair_rule_summary",
+    "SELECTION_SLATES", "SELECTION_MEASURES", "score_frontiers", "rule_search", "rule_holdout",
+    "describe_rule", "push_deflate_backtest", "backtest_summary",
 ]

@@ -1767,6 +1767,41 @@
   }
   el('reset-filters').addEventListener('click', resetFilters);
 
+  /* The choice rule from the selection study (07_Analysis, section 4i): of
+     every percentile-band rule on every portfolio measure, alone and in pairs,
+     the one that held up on slates it was not chosen on was "expected return in
+     the 70th-90th percentile of the frontier". Chosen in all ten leave-one-
+     slate-out folds; its portfolios beat the frontier median on 8 of 10
+     held-out slates. The very top of the range was worse than the median --
+     those are a few long-priced legs carrying the largest, most selection-
+     inflated claims.
+
+     Applied as an ordinary fader on this run's own percentiles, so it shows up
+     in the rail, survives in the hash and can be widened by hand. Everything
+     else is reset first, so the band is the only constraint. */
+  const STUDY_BAND = { key: 'expected_return_pct', lo: 0.70, hi: 0.90 };
+  function quantile(sorted, q) {
+    if (!sorted.length) return NaN;
+    const x = q * (sorted.length - 1), i = Math.floor(x), f = x - i;
+    return i + 1 < sorted.length ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
+  }
+  function applyStudyBand() {
+    const vals = portfolios.map(p => p[STUDY_BAND.key])
+      .filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+    if (!vals.length) return;
+    state.faders = DEFAULT_FADERS.map(key => newFader(key));
+    state.splits.clear();
+    state.props.clear();
+    state.events.clear();
+    state.search = '';
+    const f = state.faders.find(x => x.key === STUDY_BAND.key);
+    f.min = quantile(vals, STUDY_BAND.lo);
+    f.max = quantile(vals, STUDY_BAND.hi);
+    state.sort = { key: STUDY_BAND.key, dir: -1 };
+    renderRail(); renderBook(); renderMeta(); writeHash();
+  }
+  el('study-band').addEventListener('click', applyStudyBand);
+
   // The number of rows that fit is a function of the window, so a resize is a
   // reason to rebuild the window even though nothing about the data changed.
   let resizeQueued = false;
