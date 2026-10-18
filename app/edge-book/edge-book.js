@@ -1769,17 +1769,18 @@
 
   /* The choice rule from the selection study (07_Analysis, section 4i): of
      every percentile-band rule on every portfolio measure, alone and in pairs,
-     the one that held up on slates it was not chosen on was "expected return in
-     the 70th-90th percentile of the frontier". Chosen in all ten leave-one-
-     slate-out folds; its portfolios beat the frontier median on 8 of 10
-     held-out slates. The very top of the range was worse than the median --
-     those are a few long-priced legs carrying the largest, most selection-
+     the one that held up on slates it was not chosen on was a band of expected
+     return. Searched in 5-point steps, "the 75th-85th percentile of the
+     frontier" was chosen in all ten leave-one-slate-out folds and beat the
+     frontier median on 9 of 10 held-out slates (score 0.670, against 0.642 for
+     the wider 70th-90th). Above about the 95th percentile it turns sharply
+     worse -- a few long-priced legs carrying the largest, most selection-
      inflated claims.
 
      Applied as an ordinary fader on this run's own percentiles, so it shows up
      in the rail, survives in the hash and can be widened by hand. Everything
      else is reset first, so the band is the only constraint. */
-  const STUDY_BAND = { key: 'expected_return_pct', lo: 0.70, hi: 0.90 };
+  const STUDY_BAND = { key: 'expected_return_pct', lo: 0.75, hi: 0.85 };
   function quantile(sorted, q) {
     if (!sorted.length) return NaN;
     const x = q * (sorted.length - 1), i = Math.floor(x), f = x - i;
