@@ -33,7 +33,7 @@ simulation → out-of-sample attribution**
 | **Correlation modelling** | Positions in the same match are priced with a correlated joint distribution, clamped to Fréchet bounds |
 | **Risk and sizing** | Edge-aware, Sharpe-optimal leg weights, a drawdown-constrained fraction of Kelly, and explicit model-risk haircuts |
 | **Simulation** | 4,000-path × 100-round Monte Carlo for drawdown risk, and p5/p50/p95 wealth fans for compounding |
-| **Engineering** | A typed Python package with 543 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
+| **Engineering** | A typed Python package with 550 tests in CI, frozen and versioned model artifacts, resumable searches, and a self-contained interactive front end |
 
 ---
 
@@ -230,9 +230,12 @@ replays each slate through the real portfolio builder to test changes before
 they ship. On 14 slates it re-measured the same-match correlations (opposite-team
 legs are uncorrelated; same-team legs on different statistics sit near 0.17),
 found the shots model under-predicting by about 11 points in every probability
-band, and led to a per-league calibration shift on shots probabilities. Both the
-raw and the shifted probability are recorded on every run, so the shift can be
-refitted on the model's own output as evidence accumulates.
+band, and led to a per-league calibration shift on shots probabilities. Live for
+four slates, the shift concentrated the portfolios in shots, every position
+leaning on the same constant, so it now runs in shadow: each run records both
+the raw and the shifted probability, while portfolios use the raw one, and
+`study.shift_monitor` scores the two out of sample until there is enough
+evidence to decide.
 
 ---
 
@@ -269,7 +272,9 @@ The final stage writes one self-contained HTML file. It needs no server.
 - **Correlation structure.** Correlations are measured from settled data, but
   per statistic pair they remain noisy, and triples assume no three-way term.
 - **Calibration layer.** The shots shift is fitted on 12 slates in two leagues;
-  its size is estimated to within several percentage points, not known.
+  its size is estimated to within several percentage points, not known. It runs
+  in shadow (`config.SHOTS_SHIFT_LIVE = False`) until the out-of-sample record
+  settles that.
 - **Conditional on the model.** Everything downstream of pricing assumes the model
   probabilities are right. If they are optimistic by more than about 8 percentage
   points across the board, the edge disappears.
@@ -323,7 +328,7 @@ Notebooks/                  00 – 07 drivers
 app/edge-book/              Edge Book front end (HTML, CSS, JS)
 artifacts/<target>/<ver>/   frozen window, features, params, CV and provenance
 docs/                       studies
-tests/                      543 regression tests
+tests/                      550 regression tests
 ```
 
 ## Reproducibility
@@ -406,7 +411,7 @@ on Python 3.12 and 3.13.
 
 - A Dixon–Coles or bivariate-Poisson correction for 1X2 and correct-score markets
 - Repeat the edge-capacity study once more slates have settled
-- Refit the shots calibration and re-run the builder replays at 25–30 slates
+- Score the shadow shots calibration, refit it, and re-run the builder replays at 25–30 slates
 - Find and fix the cause of the shots under-prediction in the model itself
 - Closing-line capture, for a CLV benchmark on top of the ledger
 - Lower English divisions; the pooling and promotion machinery is built for them

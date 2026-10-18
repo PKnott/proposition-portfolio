@@ -549,10 +549,25 @@ EXPORT_MAX = 2_500
 #
 # Leagues with no shots prices take the pooled value; it changes what the
 # workbook shows there and nothing else. Refit from `07_Analysis` as slates
-# accumulate, on `p_raw` -- never on the shifted value. Set both to zero to
-# switch it off.
+# accumulate, on `p_raw` -- never on the shifted value.
 SHOTS_LOGIT_SHIFT: dict[str, float] = {"Prem": 0.389, "Serie": 0.728}
 SHOTS_LOGIT_SHIFT_DEFAULT = 0.558
+
+# Whether the shift above moves `p`. Off since 18 Oct 2026; it now runs in shadow.
+#
+# Live on R023-R026 it did more than recalibrate: it lifted most shots lines from
+# just under the market price to just over it. On R026, 148 shots lines qualified
+# instead of 41 (107 of them with negative edge on the raw model), and the median
+# frontier portfolio held 76% shots, against 0-15% on R011-R022. The positions
+# all lean on the same constant, a shared risk the pair correlations do not
+# carry, and on R025 the qualifying shots landed 51% against 65% predicted.
+#
+# In shadow, every run still computes the shifted value and records it beside the
+# raw one (`..._shifted` in the markets, `p_shifted` in the ledger), and the stamp
+# records the candidate shift, so `study.shift_monitor` can score both without
+# the shift steering any portfolio. Review the monitor around January 2027
+# before switching it back on.
+SHOTS_SHIFT_LIVE = False
 
 # First run the correlation and calibration study (`fpp.study`) reads.
 #
@@ -847,6 +862,7 @@ __all__ = [
     "STUDY_FIRST_RUN",
     "SHOTS_LOGIT_SHIFT",
     "SHOTS_LOGIT_SHIFT_DEFAULT",
+    "SHOTS_SHIFT_LIVE",
     "L_GRID",
     "ALPHA_GRID",
     "PAIR_BLOCKS",

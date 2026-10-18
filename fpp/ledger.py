@@ -338,6 +338,29 @@ def run_stamp(source: str | None = None) -> dict:
     return {**model_stamp(), "stamp_origin": "capture"}
 
 
+def _shift_shots(props: pd.DataFrame, p: np.ndarray, shots_shift, sign: float) -> np.ndarray:
+    p = np.asarray(p, dtype=float).copy()
+    if not shots_shift:
+        return p
+    shifts = json.loads(shots_shift) if isinstance(shots_shift, str) else dict(shots_shift)
+    default = float(shifts.get("*", 0.0))
+    is_shots = (props["target"].astype(str) == "shots").to_numpy()
+    c = np.array([float(shifts.get(str(lk), default)) for lk in props["league_key"]])
+    inside = is_shots & (p > 0) & (p < 1) & (c != 0)
+    x = np.log(p[inside] / (1 - p[inside])) + sign * c[inside]
+    p[inside] = 1.0 / (1.0 + np.exp(-x))
+    return p
+
+
+def shifted_probability(props: pd.DataFrame, shots_shift) -> np.ndarray:
+    """What the shots shift makes of each row's `p_raw`, whether or not it was applied.
+
+    `shots_shift` is the stamp's candidate shift. Every row but shots, and every
+    row of a form stamped before the shift existed, is its own raw value.
+    """
+    return _shift_shots(props, props["p_raw"].to_numpy(dtype=float), shots_shift, +1.0)
+
+
 def raw_probability(props: pd.DataFrame, shots_shift: str | None) -> np.ndarray:
     """The model's own probability for each row, undoing the stamped shots shift.
 
@@ -348,17 +371,7 @@ def raw_probability(props: pd.DataFrame, shots_shift: str | None) -> np.ndarray:
     what lets the shift be refitted on the model, not on the model plus the
     last shift.
     """
-    p = props["p"].to_numpy(dtype=float).copy()
-    if not shots_shift:
-        return p
-    shifts = json.loads(shots_shift) if isinstance(shots_shift, str) else dict(shots_shift)
-    default = float(shifts.get("*", 0.0))
-    is_shots = (props["target"].astype(str) == "shots").to_numpy()
-    c = np.array([float(shifts.get(str(lk), default)) for lk in props["league_key"]])
-    inside = is_shots & (p > 0) & (p < 1) & (c != 0)
-    x = np.log(p[inside] / (1 - p[inside])) - c[inside]
-    p[inside] = 1.0 / (1.0 + np.exp(-x))
-    return p
+    return _shift_shots(props, props["p"].to_numpy(dtype=float), shots_shift, -1.0)
 
 
 def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
@@ -380,6 +393,10 @@ def capture(result: dict, filled: pd.DataFrame, *, source: str | None = None,
     props = proposition_rows(filled, run_code, ids)
     stamp = run_stamp(source or payload.get("source_odds_file"))
     props["p_raw"] = raw_probability(props, stamp.get("shots_shift"))
+    # The shift in shadow (or live): forms stamped before the candidate field
+    # existed applied their shift, so that is the candidate too.
+    props["p_shifted"] = shifted_probability(
+        props, stamp.get("shots_shift_candidate") or stamp.get("shots_shift"))
     # Legs point at pick ids; the ledger keys on the fixture. `props` holds both
     # columns, so the crosswalk is the frame itself rather than a second parse.
     picked = props[props["prop_id"].notna()]

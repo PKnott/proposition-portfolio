@@ -247,6 +247,10 @@ def propositions(preds: pd.DataFrame, dispersion: dict | None = None) -> pd.Data
                         # equal to `p` for every target but shots.
                         "p_raw": float(mk[target].get(f"{scope}_over_{line}_raw",
                                                       mk[target][f"{scope}_over_{line}"])),
+                        # What the shots shift would make it, live or not; equal
+                        # to `p_raw` for every target but shots.
+                        "p_shifted": float(mk[target].get(f"{scope}_over_{line}_shifted",
+                                                          mk[target][f"{scope}_over_{line}"])),
                     })
     return pd.DataFrame(rows)
 

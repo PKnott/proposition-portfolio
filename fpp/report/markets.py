@@ -21,7 +21,8 @@ import numpy as np
 import pandas as pd
 
 from ..metrics import convolve_pmf, over_prob, pmf_for
-from ..config import SHOTS_LOGIT_SHIFT, SHOTS_LOGIT_SHIFT_DEFAULT, season_sort_key
+from ..config import (SHOTS_LOGIT_SHIFT, SHOTS_LOGIT_SHIFT_DEFAULT, SHOTS_SHIFT_LIVE,
+                      season_sort_key)
 from ..spec import STAT_BY_KEY, TARGETS, target_spec
 
 GOALS_MATRIX_MAX = 6  # rows/cols 0..5 plus a "6+" bucket
@@ -206,30 +207,37 @@ def shift_probability(p: float, shift: float) -> float:
     return float(1.0 / (1.0 + np.exp(-(np.log(p / (1.0 - p)) + shift))))
 
 
-def calibrate_shots(mk: dict, league_key: str | None) -> dict:
-    """Apply the shots calibration to the team ladders, keeping the raw values.
+def calibrate_shots(mk: dict, league_key: str | None, live: bool | None = None) -> dict:
+    """Compute the shots calibration on the team ladders, and apply it if live.
 
-    Only the per-team ``home_over_*`` / ``away_over_*`` probabilities move:
-    those are what the shift was fitted on and the only shots lines a portfolio
-    can hold. Each raw value is kept as ``<key>_raw``, and ``shift`` records what
-    was applied. The pmfs, means and match-total lines are the model's own.
+    Only the per-team ``home_over_*`` / ``away_over_*`` probabilities are
+    involved: those are what the shift was fitted on and the only shots lines a
+    portfolio can hold. Each raw value is kept as ``<key>_raw`` and the shifted
+    one as ``<key>_shifted``; ``<key>`` itself takes the shifted value only when
+    `live` (default `config.SHOTS_SHIFT_LIVE`). ``shift`` records what was
+    applied (0 in shadow) and ``candidate_shift`` what would be. The pmfs, means
+    and match-total lines are the model's own.
     """
+    live = SHOTS_SHIFT_LIVE if live is None else live
     c = shots_shift(league_key)
-    mk["shift"] = c
+    mk["shift"] = c if live else 0.0
+    mk["candidate_shift"] = c
     for scope in ("home", "away"):
         for line in mk[f"{scope}_lines"]:
             key = f"{scope}_over_{line}"
             mk[f"{key}_raw"] = mk[key]
-            mk[key] = shift_probability(mk[key], c)
+            mk[f"{key}_shifted"] = shift_probability(mk[key], c)
+            if live:
+                mk[key] = mk[f"{key}_shifted"]
     return mk
 
 
 def fixture_markets(row: pd.Series, dispersion: dict[str, dict[str, float]] | None = None) -> dict:
     """Every market for one fixture, across all four target families.
 
-    Shots team ladders are calibrated here (`calibrate_shots`), so every
-    consumer -- workbook, odds form, Edge Book -- reads the same corrected
-    probability, with the model's raw value beside it.
+    Shots team ladders go through `calibrate_shots` here, so every consumer --
+    workbook, odds form, Edge Book -- reads the same probability, with the raw
+    and shifted values beside it.
     """
     out = {"goals": goal_markets(float(row["goals_home"]), float(row["goals_away"]))}
     for t in TARGETS:

@@ -204,7 +204,7 @@ def _line_record(target: str, team: str, scope: str, line: float, mk: dict, base
         "label": proposition_label(target, team, line),
         "p": _p(p),
         # Present only where a calibration shift moved `p` (shots).
-        **({"p_raw": _p(float(raw))} if raw is not None else {}),
+        **({"p_raw": _p(float(raw))} if raw is not None and float(raw) != p else {}),
         "odds": _o(safe_odds(p)),
         "league_avg": _p(base.over_rate(target, scope, line)) if base is not None else None,
     }

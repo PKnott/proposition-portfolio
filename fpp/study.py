@@ -131,6 +131,13 @@ def load_study_set(first_run: str = STUDY_FIRST_RUN, last_run: str | None = None
     # is the model's own value.
     props["p_raw"] = (props["p_raw"].fillna(props["p"]) if "p_raw" in props
                       else props["p"])
+    # The shots shift's value, recorded from R023 on (live R023-R026, shadow
+    # since). Live runs captured before `p_shifted` existed have it as `p`.
+    # Earlier runs stay blank: the shift was fitted on them, so scoring it there
+    # would be in sample.
+    shifted = props["p_shifted"] if "p_shifted" in props else pd.Series(np.nan, index=props.index)
+    moved = (props["p"] - props["p_raw"]).abs() > 1e-9
+    props["p_shifted"] = shifted.where(shifted.notna(), props["p"].where(moved))
 
     runs = ledger.read_table("runs", root)
     excluded = set()
@@ -1458,22 +1465,32 @@ def shots_shift(s: pd.DataFrame, *, group: str = "run_code", ridges=SHIFT_RIDGE_
 
 
 def shift_monitor(s: pd.DataFrame, by=("run_code", "league")) -> pd.DataFrame:
-    """Shots propositions priced *with* the shift live: raw model, shifted value, outcome.
+    """The shots shift out of sample: raw model, shifted value, outcome.
 
-    One row per run and league, for runs where `p` differs from `p_raw` on shots
-    (i.e. captured after `SHOTS_LOGIT_SHIFT` went live). `gap_raw` and
-    `gap_shifted` are hit rate minus the mean of each: if the shift is right the
-    second sits near zero while the first stays positive. Empty until the first
-    run priced with the shift has been graded.
+    Covers every graded shots proposition with a recorded `p_shifted` -- R023 on,
+    whether the shift was live (`live`) or in shadow. `gap_raw` and `gap_shifted`
+    are hit rate minus the mean of each; `logloss_raw` / `logloss_shifted` score
+    the two outright. If the shift is right, `gap_shifted` sits near zero and
+    `logloss_shifted` below `logloss_raw`. Pass ``by=("qualified",)`` to see the
+    lines a portfolio could hold, where selection makes the model look best.
     """
-    sh = s[(s["target"] == "shots") & ((s["p"] - s["p_raw"]).abs() > 1e-9)]
+    cols = [*by, "live", "n", "hit_rate", "p_raw", "p_shifted", "gap_raw", "gap_shifted",
+            "logloss_raw", "logloss_shifted"]
+    sh = s[(s["target"] == "shots") & s["p_shifted"].notna()].copy()
     if sh.empty:
-        return pd.DataFrame(columns=[*by, "n", "hit_rate", "p_raw", "p", "gap_raw", "gap_shifted"])
+        return pd.DataFrame(columns=cols)
+    sh["live"] = (sh["p"] - sh["p_raw"]).abs() > 1e-9
+    y = sh["y"].astype(float)
+    for k in ("raw", "shifted"):
+        q = sh[f"p_{k}"].clip(1e-6, 1 - 1e-6)
+        sh[f"ll_{k}"] = -(y * np.log(q) + (1 - y) * np.log(1 - q))
     g = sh.groupby(list(by), observed=True)
-    out = g.agg(n=("y", "size"), hit_rate=("y", "mean"), p_raw=("p_raw", "mean"), p=("p", "mean"))
+    out = g.agg(live=("live", "any"), n=("y", "size"), hit_rate=("y", "mean"),
+                p_raw=("p_raw", "mean"), p_shifted=("p_shifted", "mean"),
+                logloss_raw=("ll_raw", "mean"), logloss_shifted=("ll_shifted", "mean"))
     out["gap_raw"] = out["hit_rate"] - out["p_raw"]
-    out["gap_shifted"] = out["hit_rate"] - out["p"]
-    return out.reset_index()
+    out["gap_shifted"] = out["hit_rate"] - out["p_shifted"]
+    return out.reset_index()[cols]
 
 
 
