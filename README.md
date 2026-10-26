@@ -7,7 +7,7 @@ prices, and turned into risk-managed portfolios.**
 
 The project builds calibrated probability distributions for match statistics:
 goals, shots, shots on target and corners, per team, across Europe's five top
-leagues. It compares those distributions with real-world market odds to find
+leagues. It compares those distributions with real-world market prices to find
 mispriced propositions. It then solves a portfolio problem: which combination of
 positions to hold, how to weight them, and what fraction of capital to commit.
 Every decision is scored on the portfolio's *exact* discrete return distribution
@@ -28,7 +28,7 @@ simulation → out-of-sample attribution**
 | **Probabilistic forecasting** | Gradient-boosted count models (XGBoost Poisson / Tweedie), with each predicted mean mapped to a full Poisson or Negative Binomial pmf. Dispersion is fitted per league on validation residuals |
 | **Validation discipline** | Expanding-window walk-forward CV by season, record-before-update features, a withheld tuning season, and a test season scored exactly once |
 | **Statistical testing** | Paired bootstrap CIs and Wilcoxon tests, with an edge counted only when both agree. Calibration is graded by ECE, Brier with its Murphy decomposition, calibration slope and Wilson bands |
-| **Market pricing** | Model probabilities compared with real-world decimal odds. Edge is measured per proposition, and (probability, price) dominance is applied within each event |
+| **Market pricing** | Model probabilities compared with real-world market prices (decimal). Edge is measured per proposition, and (probability, price) dominance is applied within each event |
 | **Portfolio optimisation** | A three-objective frontier (expected return, variance, P(profit)) over up to ~10²³ candidate portfolios, found by a dynamic programme over a Minkowski sum |
 | **Correlation modelling** | Positions in the same match are priced with a correlated joint distribution, clamped to Fréchet bounds |
 | **Risk and sizing** | Edge-aware, Sharpe-optimal leg weights, a drawdown-constrained fraction of Kelly, and explicit model-risk haircuts |
@@ -77,8 +77,8 @@ neither too extreme nor too timid.
 | | |
 |---|---|
 | **Sharpe² = Σ Sᵢ²** | Under edge-aware weights, portfolio Sharpe equals the square root of the summed squared leg Sharpes. This is an algebraic identity, so it does not depend on the sample. It was verified to 1e-16 on real slates and is pinned by a test. The result gives one scalar, additive over legs, that orders every possible selection. |
-| **The protective stake ≈ 0.111 × Kelly** | The 4,000-path drawdown simulation turned out to compute a near-fixed fraction of Kelly (r = 0.998, worst residual 6.2%). A risk appetite that had been implicit in three configuration constants became one visible number. |
-| **The old stake split cost ~39% of growth** | Minimum-variance weighting ignored edge. On one real book it put 25.5% of the stake on the worst position in it and 4.3% on the best. |
+| **The protective position size ≈ 0.111 × Kelly** | The 4,000-path drawdown simulation turned out to compute a near-fixed fraction of Kelly (r = 0.998, worst residual 6.2%). A risk appetite that had been implicit in three configuration constants became one visible number. |
+| **The old allocation split cost ~39% of growth** | Minimum-variance weighting ignored edge. On one real portfolio it put 25.5% of the capital on the worst position in it and 4.3% on the best. |
 | **Same-match correlation +0.455; opposite teams −0.185** | Measured over 1,438 settled same-match pairs, against a placebo of −0.013 for pairs drawn from different matches. This led to pricing two positions per match with a correlated joint distribution instead of banning them. Re-measured on 14 slates (qualified propositions, clustered by match): same stat 0.60 / 0.39 / 0.23 by line gap, different stat 0.17, opposite teams ≈0. Config now uses these. |
 
 The study also caught an error in its own method. A sign flip in the correlation
@@ -86,7 +86,7 @@ model had overstated one result by 35%, and the correction is written up
 alongside the findings rather than quietly applied.
 
 **→ [The full study: *Edge capacity*](docs/edge-capacity.md)**. It covers what
-portfolio size does to variance, stake and growth, why the stake split was the
+portfolio size does to variance, position size and growth, why the allocation split was the
 bug, and what adding legs provably cannot fix.
 
 ---
@@ -104,8 +104,8 @@ bug, and what adding legs provably cannot fix.
 - **Completeness is measured, not remembered.** `fpp.reconcile` checks that every
   league-season holds `teams × (teams − 1)` matches, which caught seasons frozen
   short that had gone unnoticed for months.
-- **Real-world market odds** are sourced for each fixture and captured in a
-  self-contained odds form. Each row carries its own model probability, so
+- **Real-world market prices** are sourced for each fixture and captured in a
+  self-contained price form. Each row carries its own model probability, so
   nothing downstream depends on joining strings back to the predictions.
 
 ### 2. Forecasting
@@ -201,9 +201,9 @@ win/lose legs a normal approximation misstates the tail. In one portfolio the
 simulated P(return > 100%) was 75.6%, against about 66% from a normal fit with the
 same mean and SD.
 
-Two model-risk terms can haircut the stake: the error *shared* by every leg on a
+Two model-risk terms can haircut the position size: the error *shared* by every leg on a
 slate, and its spread. Independent per-leg error is deliberately left out, because
-it diversifies away; simulated books from 6 to 96 legs are indistinguishable from
+it diversifies away; simulated portfolios from 6 to 96 legs are indistinguishable from
 a perfect model. Both terms stay at zero until the data supports a value.
 
 ### 7. Out-of-sample attribution
@@ -294,7 +294,7 @@ The final stage writes one self-contained HTML file. It needs no server.
 | Features | `02_Features` | Rolling priors, promotion seeds, feature selection |
 | Tune | `03_Tuning` | Walk-forward CV; alternating window and hyperparameter search |
 | Evaluate | `04_Evaluation` | Held-out season, touched once; significance and calibration |
-| Predict | `05_Run` | Score fixtures; write the predictions workbook and the odds form |
+| Predict | `05_Run` | Score fixtures; write the predictions workbook and the price form |
 | Portfolio | `06_Split` | Edge, portfolio search, sizing and the Edge Book |
 | Settle | `fpp.ledger` | Capture each run and settle it against results |
 | Analyse | `07_Analysis` | Correlation, calibration and builder replays on settled slates (read-only) |
@@ -383,7 +383,7 @@ it freezes `artifacts/` for all four targets.
 1. `05_Run` scores the upcoming fixtures, in about 3–5 minutes, mostly network
    time. It writes `predictions_<date>.xlsx` and a blank `odds_input_<date>.xlsx`
    listing every proposition the fixtures are priced at.
-2. Real-world market odds for each proposition are captured into the odds form.
+2. Real-world market prices for each proposition are captured into the price form.
 3. `06_Split` reads the filled form and nothing else. It finds the qualifying
    propositions, searches the portfolio frontier, sizes each portfolio, and writes
    `edge_book_<date>.html`. Expect about 30–35 minutes on a full weekend slate.
