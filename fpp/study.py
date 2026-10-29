@@ -1119,7 +1119,7 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
                       grid: int = REPLAY_GRID, pick_rule: dict | None = None,
                       max_leg_stake: float | None = None,
                       pair_same_team_stat: bool | None = None,
-                      p: np.ndarray | None = None) -> dict:
+                      p: np.ndarray | None = None, keep: np.ndarray | None = None) -> dict:
     """One slate through `portfolio.search`, with every undominated portfolio settled.
 
     Returns ``{"frontier": DataFrame, "pick": Series, "info": dict}``. The frontier
@@ -1127,6 +1127,11 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     realised return per unit allocated (`realised_R`), how many legs it holds and
     how many of its matches it holds as a pair or a triple. The pick is the 06
     rule's choice, sized at `growth.suggested_fraction`.
+
+    `keep`, when given, marks the rows allowed to qualify; the rest are offered
+    unpriced, so the search never sees them. The return also carries the slot
+    layout (`alloc`, `price`, `prob`, `rho`, `rid` -- the row behind each slot, -1
+    where empty) so a caller can re-price the frontier under other probabilities.
     """
     from . import portfolio as pf
     from .growth import growth_metrics, suggested_fraction
@@ -1137,7 +1142,8 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     cap = MAX_LEG_STAKE if max_leg_stake is None else max_leg_stake
     same = PAIR_SAME_TEAM_STAT if pair_same_team_stat is None else pair_same_team_stat
     p_sel = rows["p"].to_numpy() if p is None else np.asarray(p, float)
-    res = pf.search(_filled(rows, p_sel), leg_var=leg_var, grid=grid,
+    offered = rows if keep is None else rows.assign(o=np.where(keep, rows["o"], np.nan))
+    res = pf.search(_filled(offered, p_sel), leg_var=leg_var, grid=grid,
                     triples=triples, max_leg_stake=cap, pair_same_team_stat=same)
     scored, opts, picks = res["scored"], res["options"], res["picks"]
     front = scored[scored["undominated"]].copy()
@@ -1150,6 +1156,7 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     combos = front["combo"].to_numpy()
     stakes, prob, odds, rho = pf.stakes_for(picks[combos], opts, front["split"].iloc[0], cap)
     Y = np.zeros_like(prob)
+    rid = np.full(prob.shape, -1, int)
     multi = np.zeros(len(combos), int)
     tri = np.zeros(len(combos), int)
     for r_i, c in enumerate(combos):
@@ -1162,6 +1169,7 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
             tri[r_i] += len(mem) == 3
             for slot, prop in enumerate(mem):
                 Y[r_i, W * j + slot] = y_rows[rid_of[(j, prop)]]
+                rid[r_i, W * j + slot] = rid_of[(j, prop)]
     front["realised_R"] = (stakes * odds * Y).sum(axis=1)
     front["multi_events"] = multi
     front["triple_events"] = tri
@@ -1177,7 +1185,8 @@ def frontier_outcomes(rows: pd.DataFrame, *, triples: bool, leg_var: int = LEG_V
     pick["growth"] = float(np.log1p(f * (pick["realised_R"] - 1.0)))
     info = {**res["info"], "options": int(opts.sizes.sum()), "width": W,
             "triple_options": int(sum((x > 0).sum() for x in opts.p3))}
-    return {"frontier": front, "pick": pick, "info": info}
+    return {"frontier": front, "pick": pick, "info": info, "alloc": stakes, "price": odds,
+            "prob": prob, "rho": rho, "rid": rid}
 
 
 
@@ -1692,6 +1701,292 @@ def describe_rule(rule) -> str:
     return s if not m2 else s + f" & {m2} {int(lo2)}-{int(hi2)}%"
 
 
+
+# --- 12. qualify on a lower bound (`fpp.intervals`) -------------------------
+#
+# Each slate as run, with the model's own probability (`p_raw`: the shots shift
+# is off), qualified on the lower bound of an interval around it and sized at a
+# point between that bound and `p`. The pick is the Edge Book band rule the
+# weekly run uses: 75th-85th percentile of promised return, P(returns nothing)
+# under 1%, more than 10 legs, then the tie-breaks at their displayed precision.
+
+INTERVAL_SLATES = (*AS_RUN_SLATES, "R023", "R024", "R025", "R026", "R027")
+BAND = (0.75, 0.85)
+MIN_LEGS = 10
+
+
+def interval_widths(raw: pd.DataFrame, boot: pd.DataFrame) -> pd.DataFrame:
+    """`raw` with `width_a` (bootstrap, logit) and, per slate, `width_b` fitted without it.
+
+    Method B for a slate is fitted on the de-duplicated study set less every
+    match that slate prices, so no slate's own outcomes set its interval.
+    """
+    from .intervals import bootstrap_width, track_record_width
+
+    b = boot[["run_code", "prop_key"]].assign(width_a=bootstrap_width(boot).to_numpy())
+    out = raw.merge(b, on=["run_code", "prop_key"], how="left")
+    s, _ = load_study_set()
+    gap = (out["p_raw"] - 1.0 / out["o"]).clip(lower=0)
+    out["width_b"] = np.nan
+    out["width_b_fit"] = ""
+    for run in out["run_code"].unique():
+        here = out["run_code"] == run
+        train = s[~s["event"].isin(out.loc[here, "event"])]
+        a, k = track_record_width(train)
+        out.loc[here, "width_b"] = a + k * gap[here]
+        out.loc[here, "width_b_fit"] = f"{a:.4f} + {k:.3f} * gap"
+    return out
+
+
+def _band_pick(out: dict, rows: pd.DataFrame, p_centre: np.ndarray, p_low: np.ndarray) -> dict:
+    """The weekly run's choice off this frontier, settled; empty if nothing passes."""
+    from .growth import growth_metrics, ruin_prob
+
+    f = out["frontier"].reset_index(drop=True)
+    v = f["pct_expected_return"].to_numpy()
+    lo, hi = np.quantile(v, BAND[0]), np.quantile(v, BAND[1])
+    idx = np.flatnonzero((v >= lo) & (v <= hi) & (f["legs"].to_numpy() > MIN_LEGS))
+    if len(idx):
+        rho = out["rho"]
+        p0 = ruin_prob(out["prob"][idx], None if rho is None else rho[idx])
+        idx = idx[p0 < 0.01]
+    band_all = np.flatnonzero((v >= lo) & (v <= hi))
+    rec = {"band_n": len(band_all),
+           "band_R": float(f.loc[band_all, "realised_R"].mean()) if len(band_all) else np.nan,
+           "band_profitable": float((f.loc[band_all, "realised_R"] > 1).mean()) if len(band_all) else np.nan,
+           "guarded_n": len(idx)}
+    if not len(idx):
+        return rec
+    c = f.loc[idx].assign(_i=idx, _er=lambda x: (x["pct_expected_return"] * 100).round(2),
+                          _cap=lambda x: x["capacity"].round(3))
+    c = c.sort_values(["_er", "_cap"], ascending=False)
+    tied = c[(c["_er"] == c["_er"].iloc[0]) & (c["_cap"] == c["_cap"].iloc[0])]
+    pay, prob, rho = out["alloc"] * out["price"], out["prob"], out["rho"]
+    gi = tied["_i"].to_numpy()
+    gm = growth_metrics(pay[gi], prob[gi], rho=None if rho is None else rho[gi])
+    tied = tied.assign(_g=(gm["g_suggested"].to_numpy() * 100).round(2),
+                       _f=gm["f_suggested"].to_numpy())
+    tied = tied.sort_values(["_g", "legs", "pct_sd", "median_leg_p", "p_over_100", "combo"],
+                            ascending=[False, True, True, False, False, True])
+    pk = tied.iloc[0]
+    i = int(pk["_i"])
+    rid = out["rid"][i]
+    w = out["alloc"][i] * out["price"][i]
+    held = rid >= 0
+    R = float(pk["realised_R"])
+    fs = float(pk["_f"])
+    return {**rec, "pick_legs": int(pk["legs"]), "pick_R": R, "pick_f": fs,
+            "pick_growth": float(np.log1p(fs * (R - 1.0))),
+            "pick_promised": float(pk["pct_expected_return"]),
+            "pick_promised_p": float((w[held] * p_centre[rid[held]]).sum()),
+            "pick_promised_lower": float((w[held] * p_low[rid[held]]).sum())}
+
+
+def _interval_job(args) -> dict:
+    run, method, level, tau, frame = args
+    from .intervals import lower_bound, sizing_probability
+
+    rows = frame[frame["run_code"] == run].reset_index(drop=True)
+    p = rows["p_raw"].to_numpy(float)
+    if method == "none":
+        low = p.copy()
+    elif method == "A":
+        low = lower_bound(p, level=level, width_a=rows["width_a"].fillna(0.0).to_numpy())
+    else:
+        low = lower_bound(p, level=level, width_b=rows["width_b"].to_numpy())
+    keep = rows["o"].notna().to_numpy() & (low * rows["o"].to_numpy() >= 1.0)
+    p_size = sizing_probability(p, low, tau)
+    base = {"slate": run, "method": method, "level": level, "tau": tau}
+    return _replay_keep(rows, keep, p_size, p, low, base)
+
+
+def _replay_keep(rows, keep, p_size, p, low, base) -> dict:
+    """One slate through the builder with only `keep` rows qualifying, settled."""
+    n_events = int(rows.loc[keep, "event"].nunique())
+    base = {**base, "lines": int(keep.sum()), "events": n_events}
+    if n_events <= MIN_LEGS:
+        return {**base, "status": "too few events"}
+    try:
+        out = frontier_outcomes(rows, triples=True, p=p_size, keep=keep,
+                                leg_var=max(0, n_events - MIN_LEGS))
+    except Exception as exc:                       # an empty or degenerate search
+        return {**base, "status": f"search failed: {type(exc).__name__}"}
+    f, pk06 = out["frontier"], out["pick"]
+    return {**base, "status": "ok", "frontier": len(f),
+            "front_R": float(f["realised_R"].mean()),
+            "front_profitable": float((f["realised_R"] > 1).mean()),
+            "pick06_R": float(pk06["realised_R"]), "pick06_growth": float(pk06["growth"]),
+            **frontier_distribution(out, p, low),
+            **_band_pick(out, rows, p, low)}
+
+
+FRONTIER_SAMPLE = 200       # portfolios per slate sized with `growth_metrics` (~0.2 s each)
+
+
+def frontier_distribution(out: dict, p_centre, p_low, *, sample: int = FRONTIER_SAMPLE,
+                          seed: int = 2026) -> dict:
+    """The whole frontier's outcome on one slate, not one rule's pick from it.
+
+    Realised return per unit over every undominated portfolio (quantiles, share
+    profitable, share down 10%+, mean of the worst decile) and what they promised.
+    Capital growth needs each portfolio's own suggested size, which is too slow
+    for every portfolio, so it is measured on a seeded random `sample`.
+    """
+    from .growth import growth_metrics
+
+    f = out["frontier"].reset_index(drop=True)
+    R = f["realised_R"].to_numpy(float)
+    q = np.quantile(R, [0.1, 0.25, 0.5, 0.75, 0.9])
+    w = out["alloc"] * out["price"]
+    rid = out["rid"]
+    held = rid >= 0
+    pc = np.where(held, np.asarray(p_centre, float)[np.where(held, rid, 0)], 0.0)
+    pl = np.where(held, np.asarray(p_low, float)[np.where(held, rid, 0)], 0.0)
+    rec = {"fr_n": len(R), "fr_mean": float(R.mean()),
+           **{f"fr_q{int(k * 100)}": float(v) for k, v in zip((0.1, 0.25, 0.5, 0.75, 0.9), q)},
+           "fr_profitable": float((R > 1).mean()), "fr_down10": float((R < 0.9).mean()),
+           "fr_worst10": float(np.sort(R)[: max(1, len(R) // 10)].mean()),
+           "fr_promised": float(f["pct_expected_return"].mean()),
+           "fr_promised_p": float((w * pc).sum(axis=1).mean()),
+           "fr_promised_lower": float((w * pl).sum(axis=1).mean())}
+    rng = np.random.default_rng(seed)
+    idx = np.sort(rng.choice(len(R), size=min(sample, len(R)), replace=False))
+    rho = out["rho"]
+    gm = growth_metrics(w[idx], out["prob"][idx], rho=None if rho is None else rho[idx])
+    fs = gm["f_suggested"].to_numpy(float)
+    g = np.log1p(fs * (R[idx] - 1.0))
+    rec.update({"fr_size": float(fs.mean()), "fr_growth_mean": float(g.mean()),
+                "fr_growth_q10": float(np.quantile(g, 0.1)),
+                "fr_growth_q50": float(np.quantile(g, 0.5)),
+                "fr_growth_q90": float(np.quantile(g, 0.9)),
+                "fr_growth_positive": float((g > 0).mean())})
+    return rec
+
+
+def interval_backtest(variants, *, slates=INTERVAL_SLATES, boot_path=None, workers: int = 4,
+                      cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
+    """Every slate through the builder under each ``(method, level, tau)`` variant.
+
+    `method` is "none" (today's rule), "A" (bootstrap width) or "B" (track-record
+    width). A slate the variant leaves with 10 or fewer qualifying matches gets
+    no portfolio, as the weekly run would refuse it: zero growth, recorded.
+    ~4 minutes a job; keep `workers` to what memory allows (4 on 8 GB).
+    """
+    import json
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    path = Path(cache) if cache else None
+    if path is not None and path.exists() and not refresh:
+        return pd.read_parquet(path)
+    raw, _ = load_study_set(dedupe=False)
+    raw = raw[raw["run_code"].isin(slates)].reset_index(drop=True)
+    boot = pd.read_parquet(boot_path or ledger.store_dir() / "Reports" / "interval_bootstrap.parquet")
+    frame = interval_widths(raw, boot)
+    jobs = [(r, m, lv, tu, frame[frame["run_code"] == r]) for (m, lv, tu) in variants for r in slates]
+    # One line per finished job beside the cache, so a long run shows progress
+    # and an interrupted one resumes where it stopped.
+    log = path.with_suffix(".jsonl") if path is not None else None
+    done = []
+    if log is not None and log.exists() and not refresh:
+        done = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+    elif log is not None:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("")
+    seen = {(d["slate"], d["method"], d["level"], d["tau"]) for d in done}
+    todo = [j for j in jobs if (j[0], j[1], j[2], j[3]) not in seen]
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_interval_job, j) for j in todo]
+        for fut in as_completed(futures):
+            rec = fut.result()
+            done.append(rec)
+            if log is not None:
+                with log.open("a") as fh:
+                    fh.write(json.dumps(rec, default=float) + "\n")
+    out = pd.DataFrame(done)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_parquet(path, index=False)
+    return out
+
+
+# Safety nets at the two ends of the probability range, where the lines that
+# beat the market have landed well short of the model (high-p lines 151 of 164.8
+# expected, long shots 6 of 13.5, R006-R027). A net only removes lines; sizing
+# stays at the model's p.
+
+
+def _net_job(args) -> dict:
+    run, floor, guard, frame = args
+    rows = frame[frame["run_code"] == run].reset_index(drop=True)
+    p = rows["p_raw"].to_numpy(float)
+    o = rows["o"].to_numpy(float)
+    edge = p * o - 1.0
+    keep = ~np.isnan(o) & (edge >= 0) & (p >= floor)
+    # Above HIGH_P a line must clear `guard` of edge, not just beat the price.
+    keep &= ~((p > HIGH_P) & (edge < guard))
+    return _replay_keep(rows, keep, p, p, p,
+                        {"slate": run, "floor": floor, "guard": guard})
+
+
+HIGH_P = 0.8
+NO_HIGH_P = 9.0          # a guard no line can clear: drop every line above HIGH_P
+
+
+def net_backtest(variants, *, slates=INTERVAL_SLATES, workers: int = 4,
+                 cache: Path | str | None = None, refresh: bool = False) -> pd.DataFrame:
+    """Every slate through the builder under each ``(floor, guard)`` safety net.
+
+    `floor` drops qualifying lines with model p below it (the long-shot net);
+    `guard` is the edge a line above `HIGH_P` must clear (`NO_HIGH_P` drops them
+    all). ``(0, 0)`` is today's rule. Resumable, like `interval_backtest`.
+    """
+    import json
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    path = Path(cache) if cache else None
+    if path is not None and path.exists() and not refresh:
+        return pd.read_parquet(path)
+    raw, _ = load_study_set(dedupe=False)
+    frame = raw[raw["run_code"].isin(slates)].reset_index(drop=True)
+    log = path.with_suffix(".jsonl") if path is not None else None
+    done = []
+    if log is not None and log.exists() and not refresh:
+        done = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+    elif log is not None:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("")
+    seen = {(d["slate"], d["floor"], d["guard"]) for d in done}
+    jobs = [(r, fl, gu, frame[frame["run_code"] == r]) for (fl, gu) in variants for r in slates
+            if (r, fl, gu) not in seen]
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        for fut in as_completed([ex.submit(_net_job, j) for j in jobs]):
+            rec = fut.result()
+            done.append(rec)
+            if log is not None:
+                with log.open("a") as fh:
+                    fh.write(json.dumps(rec, default=float) + "\n")
+    out = pd.DataFrame(done)
+    if path is not None:
+        out.to_parquet(path, index=False)
+    return out
+
+
+def interval_summary(bt: pd.DataFrame) -> pd.DataFrame:
+    """One row per variant: capital multiple of the band pick, and how the slates went."""
+    d = bt.copy()
+    d["pick_growth"] = d.get("pick_growth", pd.Series(np.nan, index=d.index)).fillna(0.0)
+    d["took"] = d.get("pick_R", pd.Series(np.nan, index=d.index)).notna()
+    g = d.groupby(["method", "level", "tau"])
+    out = g.agg(slates=("slate", "size"), took=("took", "sum"), lines=("lines", "mean"),
+                capital_x=("pick_growth", lambda x: float(np.exp(x.sum()))),
+                worst_slate=("pick_growth", lambda x: float(np.expm1(x.min()))),
+                pick_R=("pick_R", "mean"), promised=("pick_promised", "mean"),
+                promised_lower=("pick_promised_lower", "mean"), legs=("pick_legs", "mean"),
+                size=("pick_f", "mean"), band_R=("band_R", "mean"),
+                front_R=("front_R", "mean"))
+    return out.reset_index()
+
+
 __all__ = [
     "load_study_set", "run_models", "grade", "pair_frame", "rho_table", "placebo_correlation",
     "correlation_vs_config", "reliability_frame", "gap_table", "market_comparison",
@@ -1705,4 +2000,6 @@ __all__ = [
     "shots_shift", "shift_monitor", "pair_rule_backtest", "pair_rule_summary",
     "SELECTION_SLATES", "SELECTION_MEASURES", "score_frontiers", "rule_search", "rule_holdout",
     "describe_rule", "push_deflate_backtest", "backtest_summary",
+    "INTERVAL_SLATES", "interval_widths", "interval_backtest", "interval_summary",
+    "HIGH_P", "NO_HIGH_P", "net_backtest", "FRONTIER_SAMPLE", "frontier_distribution",
 ]

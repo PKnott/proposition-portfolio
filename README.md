@@ -237,6 +237,31 @@ the raw and the shifted probability, while portfolios use the raw one, and
 `study.shift_monitor` scores the two out of sample until there is enough
 evidence to decide.
 
+Proposed changes are judged on the realised-return distribution of the **whole
+frontier** on every slate (quantiles, share profitable, worst decile, promised
+against delivered), plus capital growth at each portfolio's own suggested size.
+They are not judged on the one portfolio a selection rule happens to pick, and
+the uncertainty is measured at weekend level. Two changes were tested this way
+and rejected, and both are kept as recorded negative results:
+
+- **Selection on a confidence bound** (`fpp.intervals`, `study.interval_backtest`).
+  Lines where the model sits furthest above the market under-deliver: about a
+  third of the claimed edge survives. To counter that, a line qualified only if
+  the *lower* bound of its probability cleared the price. Two bound widths were
+  tested: (A) the spread across 50 match-resampled refits of the production
+  models, and (B) the model's track-record error as a function of its distance
+  from the market. Over 18 slates, A at 90% lifted the frontier's mean return by
+  2.7 points per unit allocated (weekend interval +0.4 to +6.5). It did not lift
+  growth at the suggested size (+0.03% per slate, interval −0.62% to +0.35%),
+  because the frontier it leaves is thinner and is sized smaller.
+  Leave-one-weekend-out selection kept today's rule on 6 of 7 weekends. B was
+  worse on every setting, and sizing toward the bound always cost growth.
+- **Safety nets at the tails** (`study.net_backtest`). Qualifying lines are
+  over-predicted at both ends of the probability range. Two nets were tested: a
+  probability floor of 5% or 10%, and, above p = 0.8, a requirement for 5% of
+  extra edge or dropping those lines altogether. They changed the frontier
+  median by −0.2 to −0.8 points and growth by −0.45% to 0.
+
 ---
 
 ## The Edge Book
@@ -265,8 +290,8 @@ The final stage writes one self-contained HTML file. It needs no server.
   are slightly under-predicted at low scores.
 - **Pre-match aggregates only.** There are no team sheets, injuries or in-play
   data.
-- **Small settled sample.** The attribution and replay results rest on 13–14
-  settled slates. Between-slate variance, the one term that adding legs cannot
+- **Small settled sample.** The attribution and replay results rest on about 18
+  settled slates (7–10 weekends). Between-slate variance, the one term that adding legs cannot
   diversify away, is still poorly measured, and most replay differences are not
   yet statistically distinguishable.
 - **Correlation structure.** Correlations are measured from settled data, but
@@ -322,13 +347,14 @@ fpp/                        the package
 ├── growth.py               drawdown-constrained sizing and Monte Carlo projection
 ├── ledger.py  analysis.py  capture, settle and attribute
 ├── study.py  study_plots.py  correlation and calibration studies, builder replays
+├── intervals.py            confidence bounds on model probabilities (tested, not adopted)
 └── report/                 market probabilities, workbooks, Edge Book export
 
 Notebooks/                  00 – 07 drivers
 app/edge-book/              Edge Book front end (HTML, CSS, JS)
 artifacts/<target>/<ver>/   frozen window, features, params, CV and provenance
 docs/                       studies
-tests/                      550 regression tests
+tests/                      557 regression tests
 ```
 
 ## Reproducibility
